@@ -931,6 +931,14 @@ impl MacWindow {
             }
         }
     }
+
+    /// Returns the CGWindowID (NSWindow's windowNumber) for this window.
+    /// This can be used for ScreenCaptureKit window capture.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn window_number(&self) -> u32 {
+        let this = self.0.lock();
+        unsafe { this.native_window.windowNumber() as u32 }
+    }
 }
 
 impl Drop for MacWindow {
@@ -1555,6 +1563,11 @@ impl PlatformWindow for MacWindow {
             let mut event: id = msg_send![app, currentEvent];
             let _: () = msg_send![window, performWindowDragWithEvent: event];
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn native_window_id(&self) -> Option<u32> {
+        Some(self.window_number())
     }
 }
 
