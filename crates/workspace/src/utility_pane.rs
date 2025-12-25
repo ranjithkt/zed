@@ -52,6 +52,9 @@ pub fn utility_slot_for_dock_position(position: DockPosition) -> UtilityPaneSlot
 
 impl Workspace {
     pub fn utility_pane(&self, slot: UtilityPaneSlot) -> Option<&dyn UtilityPaneHandle> {
+        if !self.should_show_docks() {
+            return None;
+        }
         match slot {
             UtilityPaneSlot::Left => self
                 .utility_panes

@@ -245,6 +245,8 @@ actions!(
         NewTerminal,
         /// Opens a new window.
         NewWindow,
+        /// Opens a new editor-only secondary window for the current project.
+        NewEditorWindow,
         /// Opens a file or directory.
         Open,
         /// Opens multiple files.
@@ -1972,7 +1974,15 @@ impl Workspace {
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
-        StatusBarSettings::get_global(cx).show
+        self.role == WorkspaceWindowRole::Primary && StatusBarSettings::get_global(cx).show
+    }
+
+    fn should_show_docks(&self) -> bool {
+        self.role == WorkspaceWindowRole::Primary
+    }
+
+    fn should_show_titlebar(&self) -> bool {
+        self.role == WorkspaceWindowRole::Primary
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -2561,6 +2571,43 @@ impl Workspace {
                 .detach_and_log_err(cx)
             }
         }
+    }
+
+    pub fn new_editor_window(
+        &mut self,
+        _: &NewEditorWindow,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.role != WorkspaceWindowRole::Primary {
+            return;
+        }
+
+        let project = self.project.clone();
+        let app_state = self.app_state.clone();
+
+        cx.spawn(async move |_, cx| {
+            cx.update(|cx| {
+                let options = (app_state.build_window_options)(None, cx);
+                cx.open_window(options, {
+                    let app_state = app_state.clone();
+                    let project = project.clone();
+                    move |window, cx| {
+                        cx.new(|cx| {
+                            Workspace::new_with_role(
+                                None,
+                                project,
+                                app_state,
+                                WorkspaceWindowRole::SecondaryEditor,
+                                window,
+                                cx,
+                            )
+                        })
+                    }
+                })
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn move_focused_panel_to_next_position(
@@ -6062,6 +6109,7 @@ impl Workspace {
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
+            .on_action(cx.listener(Self::new_editor_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
@@ -6543,6 +6591,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Div> {
+        if !self.should_show_docks() {
+            return None;
+        }
         if self.zoomed_position == Some(position) {
             return None;
         }
@@ -7131,7 +7182,9 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .overflow_hidden()
-                .children(self.titlebar_item.clone())
+                .when(self.should_show_titlebar(), |this| {
+                    this.children(self.titlebar_item.clone())
+                })
                 .on_modifiers_changed(move |_, _, cx| {
                     for &id in &notification_entities {
                         cx.notify(id);

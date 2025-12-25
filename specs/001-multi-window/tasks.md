@@ -50,20 +50,20 @@
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Add `workspace::NewEditorWindow` action in `crates/workspace/src/workspace.rs`
-- [ ] T015 [US1] Register/handle `NewEditorWindow` in `crates/zed/src/zed.rs` to open a new GPUI window whose `Workspace` shares the same `Project` as the primary window
-- [ ] T016 [US1] Mark the newly created window’s workspace role as `SecondaryEditor` and ensure the primary window remains `Primary` in `crates/workspace/src/workspace.rs`
-- [ ] T017 [US1] Render secondary windows as editor-only (no project tree, no non-editor panels, no app-level chrome inside window content) in `crates/workspace/src/workspace.rs`
+- [x] T014 [US1] Add `workspace::NewEditorWindow` action in `crates/workspace/src/workspace.rs`
+- [x] T015 [US1] Register/handle `NewEditorWindow` in `crates/zed/src/zed.rs` to open a new GPUI window whose `Workspace` shares the same `Project` as the primary window
+- [x] T016 [US1] Mark the newly created window's workspace role as `SecondaryEditor` and ensure the primary window remains `Primary` in `crates/workspace/src/workspace.rs`
+- [x] T017 [US1] Render secondary windows as editor-only (no project tree, no non-editor panels, no app-level chrome inside window content) in `crates/workspace/src/workspace.rs`
 - [x] T018 [US1] Update `ProjectPanel` open handling to route to the active editor window (lookup via `WorkspaceStore`) in `crates/project_panel/src/project_panel.rs`
-- [ ] T019 [US1] Ensure per-window tab reuse: opening a file already open in the target window activates the existing tab (verify/adjust via `Pane::open_item` usage) in `crates/workspace/src/workspace.rs`
-- [ ] T020 [US1] Ensure project-tree interaction does not overwrite active editor window selection (active editor window updates only on pane focus) in `crates/workspace/src/workspace.rs`
-- [ ] T021 [US1] Implement primary/secondary close semantics: primary triggers group-close (secondaries first, abort if canceled), secondary closes only itself in `crates/workspace/src/workspace.rs`
-- [ ] T022 [US1] Ensure open errors surfaced as prompts in the primary window even when routing opens to another window in `crates/project_panel/src/project_panel.rs`
-- [ ] T023 [US1] Update quickstart command names/steps if they differ from the final action wiring in `specs/001-multi-window/quickstart.md`
+- [x] T019 [US1] Ensure per-window tab reuse: opening a file already open in the target window activates the existing tab (verify/adjust via `Pane::open_item` usage) in `crates/workspace/src/workspace.rs`
+- [x] T020 [US1] Ensure project-tree interaction does not overwrite active editor window selection (active editor window updates only on pane focus) in `crates/workspace/src/workspace.rs`
+- [x] T021 [US1] Implement primary/secondary close semantics: primary triggers group-close (secondaries first, abort if canceled), secondary closes only itself in `crates/workspace/src/workspace.rs`
+- [x] T022 [US1] Ensure open errors surfaced as prompts in the primary window even when routing opens to another window in `crates/project_panel/src/project_panel.rs`
+- [x] T023 [US1] Update quickstart command names/steps if they differ from the final action wiring in `specs/001-multi-window/quickstart.md`
 
 ### Validation
 
-- [ ] T024 [US1] Run focused tests after implementation: `cargo test -p workspace -p project_panel` (repo root: `Cargo.toml`)
+- [x] T024 [US1] Run focused tests after implementation: `cargo test -p workspace -p project_panel` (repo root: `Cargo.toml`)
 - [ ] T025 [US1] Run quickstart manual validation checklist in `specs/001-multi-window/quickstart.md`
 
 **Checkpoint**: MVP complete — multi-window behavior is functional and testable independently.
