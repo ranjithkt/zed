@@ -4718,10 +4718,10 @@ impl Workspace {
         } else {
             // The pane is the last one and couldn't be removed.
             // For secondary editor windows, close the window when all tabs are closed.
-            if self.role == WorkspaceWindowRole::SecondaryEditor
-                && pane.read(cx).items_len() == 0
-            {
-                window.remove_window();
+            if self.role == WorkspaceWindowRole::SecondaryEditor && pane.read(cx).items_len() == 0 {
+                // Use the standard close flow to properly clean up window state
+                // and avoid race conditions with platform activation events.
+                self.close_window(&CloseWindow, window, cx);
             } else {
                 self.active_item_path_changed(true, window, cx);
             }
