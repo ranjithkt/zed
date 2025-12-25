@@ -1973,8 +1973,14 @@ impl Workspace {
         &self.status_bar
     }
 
+    pub fn role(&self) -> WorkspaceWindowRole {
+        self.role
+    }
+
     pub fn status_bar_visible(&self, cx: &App) -> bool {
-        self.role == WorkspaceWindowRole::Primary && StatusBarSettings::get_global(cx).show
+        // Status bar is visible in both primary and secondary windows
+        // (secondary windows show a minimal status bar with cursor position)
+        StatusBarSettings::get_global(cx).show
     }
 
     fn should_show_docks(&self) -> bool {

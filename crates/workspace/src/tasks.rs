@@ -1,14 +1,14 @@
 use std::process::ExitStatus;
 
 use anyhow::Result;
-use gpui::{AppContext, Context, Entity, Task};
+use gpui::{AppContext, Context, Entity, Task, WindowHandle};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
 use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::Window;
 
-use crate::{Toast, Workspace, notifications::NotificationId};
+use crate::{ProjectKey, Toast, Workspace, WorkspaceWindowRole, notifications::NotificationId};
 
 impl Workspace {
     pub fn schedule_task(
@@ -95,6 +95,51 @@ impl Workspace {
                 };
             });
             self.scheduled_tasks.push(task);
+        } else if self.role == WorkspaceWindowRole::SecondaryEditor {
+            // Secondary windows without a terminal provider should route task
+            // spawning to the primary window.
+            self.spawn_task_via_primary_window(spawn_in_terminal, cx);
+        }
+    }
+
+    fn spawn_task_via_primary_window(
+        &self,
+        spawn_in_terminal: SpawnInTerminal,
+        cx: &mut Context<Self>,
+    ) {
+        let project_key = ProjectKey::for_project(&self.project);
+        let workspace_store = self.app_state.workspace_store.clone();
+
+        let primary_window_id = workspace_store
+            .read(cx)
+            .primary_window_for_project(project_key);
+
+        let primary_workspace: Option<WindowHandle<Workspace>> =
+            primary_window_id.and_then(|window_id| {
+                workspace_store
+                    .read(cx)
+                    .workspaces
+                    .iter()
+                    .find(|handle| handle.window_id() == window_id)
+                    .cloned()
+            });
+
+        if let Some(primary_workspace) = primary_workspace {
+            cx.spawn(async move |_, cx| {
+                cx.update(|cx| {
+                    primary_workspace
+                        .update(cx, |workspace, window, cx| {
+                            // The returned Task tracks task execution status, but we
+                            // don't need to await it from the secondary window.
+                            let _ = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
+                        })
+                        .ok();
+                })
+                .ok();
+            })
+            .detach();
+        } else {
+            log::warn!("Cannot spawn task: no primary window found for secondary editor window");
         }
     }
 
@@ -116,6 +161,67 @@ impl Workspace {
                 window,
                 cx,
             )
+        } else if self.role == WorkspaceWindowRole::SecondaryEditor {
+            // Secondary windows without a debugger provider should route debug
+            // sessions to the primary window.
+            self.start_debug_via_primary_window(
+                scenario,
+                task_context,
+                active_buffer,
+                worktree_id,
+                cx,
+            );
+        }
+    }
+
+    fn start_debug_via_primary_window(
+        &self,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) {
+        let project_key = ProjectKey::for_project(&self.project);
+        let workspace_store = self.app_state.workspace_store.clone();
+
+        let primary_window_id = workspace_store
+            .read(cx)
+            .primary_window_for_project(project_key);
+
+        let primary_workspace: Option<WindowHandle<Workspace>> =
+            primary_window_id.and_then(|window_id| {
+                workspace_store
+                    .read(cx)
+                    .workspaces
+                    .iter()
+                    .find(|handle| handle.window_id() == window_id)
+                    .cloned()
+            });
+
+        if let Some(primary_workspace) = primary_workspace {
+            cx.spawn(async move |_, cx| {
+                cx.update(|cx| {
+                    primary_workspace
+                        .update(cx, |workspace, window, cx| {
+                            workspace.start_debug_session(
+                                scenario,
+                                task_context,
+                                active_buffer,
+                                worktree_id,
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                })
+                .ok();
+            })
+            .detach();
+        } else {
+            log::warn!(
+                "Cannot start debug session: no primary window found for secondary editor window"
+            );
         }
     }
 

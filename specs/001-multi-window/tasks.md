@@ -84,10 +84,10 @@
 
 ### Research for User Story 4
 
-- [ ] T031 [P] [US4] Investigate Run/Debug action dispatch path from editor inline buttons in `crates/editor/src/editor.rs`
-- [ ] T032 [P] [US4] Examine existing status bar architecture in `crates/workspace/src/status_bar.rs`
-- [ ] T033 [P] [US4] Examine OutlinePanel integration with Workspace in `crates/outline_panel/src/outline_panel.rs`
-- [ ] T034 [P] [US4] Investigate tab drag-drop and GPUI display APIs in `crates/workspace/src/pane.rs` and `crates/gpui/src`
+- [x] T031 [P] [US4] Investigate Run/Debug action dispatch path from editor inline buttons in `crates/editor/src/editor.rs`
+- [x] T032 [P] [US4] Examine existing status bar architecture in `crates/workspace/src/status_bar.rs`
+- [x] T033 [P] [US4] Examine OutlinePanel integration with Workspace in `crates/outline_panel/src/outline_panel.rs`
+- [x] T034 [P] [US4] Investigate tab drag-drop and GPUI display APIs in `crates/workspace/src/pane.rs` and `crates/gpui/src`
 
 ### Tests for User Story 4 (required for behavior changes) ⚠️
 
@@ -98,16 +98,24 @@
 
 ### Implementation: FR-019 - Run/Debug actions in secondary windows
 
-- [ ] T039 [US4] Identify why Run/Debug actions fail in secondary windows (trace action dispatch) in `crates/editor/src/editor.rs`
-- [ ] T040 [US4] Ensure Run/Debug actions are registered in secondary window's action context in `crates/zed/src/zed.rs`
-- [ ] T041 [US4] Verify task output appears correctly (in primary window terminal if needed) in `crates/terminal_view/src/terminal_view.rs`
+- [x] T039 [US4] Identify why Run/Debug actions fail in secondary windows (trace action dispatch) in `crates/editor/src/editor.rs`
+  - Root cause: `terminal_provider` is None in secondary windows (no TerminalPanel)
+  - Solution: Route task/debug spawning to primary window via `WorkspaceStore`
+- [x] T040 [US4] Ensure Run/Debug actions are registered in secondary window's action context in `crates/workspace/src/tasks.rs`
+  - Added `spawn_task_via_primary_window()` for task routing
+  - Added `start_debug_via_primary_window()` for debug session routing
+- [ ] T041 [US4] Verify task output appears correctly (in primary window terminal if needed) - manual testing required
 
 ### Implementation: FR-020 - Minimal status bar
 
-- [ ] T042 [US4] Add conditional rendering for secondary window status bar in `crates/workspace/src/status_bar.rs`
-- [ ] T043 [US4] Implement cursor row/column display component for secondary status bar in `crates/workspace/src/status_bar.rs`
-- [ ] T044 [US4] Subscribe to active editor cursor position changes in `crates/workspace/src/workspace.rs`
-- [ ] T045 [US4] Update `Workspace::render()` to show minimal status bar for `SecondaryEditor` role in `crates/workspace/src/workspace.rs`
+- [x] T042 [US4] Add conditional rendering for secondary window status bar in `crates/zed/src/zed.rs`
+  - Modified `initialize_workspace` to check `workspace.role()` and add only cursor position for secondary windows
+- [x] T043 [US4] Implement cursor row/column display component for secondary status bar
+  - Reused existing `CursorPosition` component from `go_to_line` crate
+- [x] T044 [US4] Subscribe to active editor cursor position changes
+  - Already handled by existing `CursorPosition` component's `StatusItemView` impl
+- [x] T045 [US4] Update `Workspace::render()` to show minimal status bar for `SecondaryEditor` role in `crates/workspace/src/workspace.rs`
+  - Changed `status_bar_visible()` to show status bar for all windows (was primary-only)
 
 ### Implementation: FR-021 - Outline Panel toggle
 

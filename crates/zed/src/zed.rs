@@ -84,8 +84,8 @@ use workspace::notifications::{
 use workspace::utility_pane::utility_slot_for_dock_position;
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    WorkspaceWindowRole, create_and_open_local_file,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
     CloseIntent, CloseWindow, NotificationFrame, RestoreBanner, with_active_or_new_workspace,
@@ -403,64 +403,77 @@ pub fn initialize_workspace(
         #[cfg(target_os = "windows")]
         unstable_version_notification(cx);
 
-        let edit_prediction_menu_handle = PopoverMenuHandle::default();
-        let edit_prediction_ui = cx.new(|cx| {
-            edit_prediction_ui::EditPredictionButton::new(
-                app_state.fs.clone(),
-                app_state.user_store.clone(),
-                edit_prediction_menu_handle.clone(),
-                app_state.client.clone(),
+        // Secondary windows get a minimal status bar with only cursor position
+        let is_secondary_window = workspace.role() == WorkspaceWindowRole::SecondaryEditor;
+
+        if !is_secondary_window {
+            // Primary windows get the full status bar with all items
+            let edit_prediction_menu_handle = PopoverMenuHandle::default();
+            let edit_prediction_ui = cx.new(|cx| {
+                edit_prediction_ui::EditPredictionButton::new(
+                    app_state.fs.clone(),
+                    app_state.user_store.clone(),
+                    edit_prediction_menu_handle.clone(),
+                    app_state.client.clone(),
+                    cx,
+                )
+            });
+            workspace.register_action({
+                move |_, _: &edit_prediction_ui::ToggleMenu, window, cx| {
+                    edit_prediction_menu_handle.toggle(window, cx);
+                }
+            });
+
+            let search_button = cx.new(|_| search::search_status_button::SearchButton::new());
+            let diagnostic_summary =
+                cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            let activity_indicator = activity_indicator::ActivityIndicator::new(
+                workspace,
+                workspace.project().read(cx).languages().clone(),
+                window,
                 cx,
-            )
-        });
-        workspace.register_action({
-            move |_, _: &edit_prediction_ui::ToggleMenu, window, cx| {
-                edit_prediction_menu_handle.toggle(window, cx);
-            }
-        });
+            );
+            let active_buffer_language =
+                cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            let active_toolchain_language =
+                cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
+            let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
+            let image_info = cx.new(|_cx| ImageInfo::new(workspace));
 
-        let search_button = cx.new(|_| search::search_status_button::SearchButton::new());
-        let diagnostic_summary =
-            cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
-        let activity_indicator = activity_indicator::ActivityIndicator::new(
-            workspace,
-            workspace.project().read(cx).languages().clone(),
-            window,
-            cx,
-        );
-        let active_buffer_language =
-            cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
-        let active_toolchain_language =
-            cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
-        let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
-        let image_info = cx.new(|_cx| ImageInfo::new(workspace));
+            let lsp_button_menu_handle = PopoverMenuHandle::default();
+            let lsp_button =
+                cx.new(|cx| LspButton::new(workspace, lsp_button_menu_handle.clone(), window, cx));
+            workspace.register_action({
+                move |_, _: &lsp_button::ToggleMenu, window, cx| {
+                    lsp_button_menu_handle.toggle(window, cx);
+                }
+            });
 
-        let lsp_button_menu_handle = PopoverMenuHandle::default();
-        let lsp_button =
-            cx.new(|cx| LspButton::new(workspace, lsp_button_menu_handle.clone(), window, cx));
-        workspace.register_action({
-            move |_, _: &lsp_button::ToggleMenu, window, cx| {
-                lsp_button_menu_handle.toggle(window, cx);
-            }
-        });
-
-        let cursor_position =
-            cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
-        let line_ending_indicator =
-            cx.new(|_| line_ending_selector::LineEndingIndicator::default());
-        workspace.status_bar().update(cx, |status_bar, cx| {
-            status_bar.add_left_item(search_button, window, cx);
-            status_bar.add_left_item(lsp_button, window, cx);
-            status_bar.add_left_item(diagnostic_summary, window, cx);
-            status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(edit_prediction_ui, window, cx);
-            status_bar.add_right_item(active_buffer_language, window, cx);
-            status_bar.add_right_item(active_toolchain_language, window, cx);
-            status_bar.add_right_item(line_ending_indicator, window, cx);
-            status_bar.add_right_item(vim_mode_indicator, window, cx);
-            status_bar.add_right_item(cursor_position, window, cx);
-            status_bar.add_right_item(image_info, window, cx);
-        });
+            let cursor_position =
+                cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+            let line_ending_indicator =
+                cx.new(|_| line_ending_selector::LineEndingIndicator::default());
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_left_item(search_button, window, cx);
+                status_bar.add_left_item(lsp_button, window, cx);
+                status_bar.add_left_item(diagnostic_summary, window, cx);
+                status_bar.add_left_item(activity_indicator, window, cx);
+                status_bar.add_right_item(edit_prediction_ui, window, cx);
+                status_bar.add_right_item(active_buffer_language, window, cx);
+                status_bar.add_right_item(active_toolchain_language, window, cx);
+                status_bar.add_right_item(line_ending_indicator, window, cx);
+                status_bar.add_right_item(vim_mode_indicator, window, cx);
+                status_bar.add_right_item(cursor_position, window, cx);
+                status_bar.add_right_item(image_info, window, cx);
+            });
+        } else {
+            // Secondary windows get only cursor position in the status bar
+            let cursor_position =
+                cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, window, cx);
+            });
+        }
 
         let handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
