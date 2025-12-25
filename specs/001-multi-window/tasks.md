@@ -60,6 +60,7 @@
 - [x] T019 [US1] Ensure per-window tab reuse: opening a file already open in the target window activates the existing tab (verify/adjust via `Pane::open_item` usage) in `crates/workspace/src/workspace.rs`
 - [x] T020 [US1] Ensure project-tree interaction does not overwrite active editor window selection (active editor window updates only on pane focus) in `crates/workspace/src/workspace.rs`
 - [x] T021 [US1] Implement primary/secondary close semantics: primary triggers group-close (secondaries first, abort if canceled), secondary closes only itself in `crates/workspace/src/workspace.rs`
+- [ ] T021a [US1] Implement auto-close for secondary windows when their last tab is closed in `crates/workspace/src/workspace.rs`
 - [x] T022 [US1] Ensure open errors surfaced as prompts in the primary window even when routing opens to another window in `crates/project_panel/src/project_panel.rs`
 - [x] T023 [US1] Update quickstart command names/steps if they differ from the final action wiring in `specs/001-multi-window/quickstart.md`
 

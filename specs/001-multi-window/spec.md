@@ -86,6 +86,7 @@ As a developer, I want multi-window workflows to feel complete so I can rely on 
 - **FR-008**: A file MUST be allowed to be open in multiple windows at the same time; opening it in one window MUST NOT close it in another window.
 - **FR-009**: When a project-tree file selection opens a file into a different window than the one containing the project tree, the active editor window MUST remain the same before and after the open action.
 - **FR-010**: Closing a secondary editor window MUST close only that window and MUST NOT close other windows for the same project.
+- **FR-010a**: When the last tab in a secondary editor window is closed, the secondary window MUST close automatically.
 - **FR-011**: Closing the primary window MUST close all windows for that project (including all secondary editor windows).
 - **FR-012**: When a file is open in multiple windows, edits made in one window MUST be reflected in all other windows that have that file open, keeping the visible content in sync.
 - **FR-013**: When a file is open in multiple windows, the “unsaved/dirty” state shown in tab headers MUST be consistent across those windows.
