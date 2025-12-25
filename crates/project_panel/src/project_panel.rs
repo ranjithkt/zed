@@ -841,35 +841,73 @@ impl ProjectPanel {
                             let entry_id = entry.id;
                             let is_via_ssh = project.read(cx).is_via_remote_server();
 
-                            workspace
-                                .open_path_preview(
-                                    ProjectPath {
-                                        worktree_id,
-                                        path: file_path.clone(),
-                                    },
+                            let project_path = ProjectPath {
+                                worktree_id,
+                                path: file_path.clone(),
+                            };
+
+                            let app_state = workspace.app_state().clone();
+                            let project_key = workspace::ProjectKey::for_project(workspace.project());
+                            let target_workspace = app_state.workspace_store.read_with(cx, |store, _| {
+                                store
+                                    .active_editor_window_for_project(project_key)
+                                    .and_then(|window_id| store.workspace_window_for_id(window_id))
+                            });
+
+                            let current_window_id = window.window_handle().window_id();
+                            let open_task = match target_workspace {
+                                Some(target_workspace) if target_workspace.window_id() != current_window_id => {
+                                    target_workspace.update(cx, |workspace, target_window, cx| {
+                                        workspace.open_path_preview(
+                                            project_path,
+                                            None,
+                                            focus_opened_item,
+                                            allow_preview,
+                                            true,
+                                            target_window,
+                                            cx,
+                                        )
+                                    })
+                                }
+                                _ => Ok(workspace.open_path_preview(
+                                    project_path,
                                     None,
                                     focus_opened_item,
                                     allow_preview,
                                     true,
-                                    window, cx,
-                                )
-                                .detach_and_prompt_err("Failed to open file", window, cx, move |e, _, _| {
-                                    match e.error_code() {
-                                        ErrorCode::Disconnected => if is_via_ssh {
-                                            Some("Disconnected from SSH host".to_string())
-                                        } else {
-                                            Some("Disconnected from remote project".to_string())
-                                        },
+                                    window,
+                                    cx,
+                                )),
+                            };
+
+                            if let Ok(open_task) = open_task {
+                                open_task.detach_and_prompt_err(
+                                    "Failed to open file",
+                                    window,
+                                    cx,
+                                    move |e, _, _| match e.error_code() {
+                                        ErrorCode::Disconnected => {
+                                            if is_via_ssh {
+                                                Some("Disconnected from SSH host".to_string())
+                                            } else {
+                                                Some("Disconnected from remote project".to_string())
+                                            }
+                                        }
                                         ErrorCode::UnsharedItem => Some(format!(
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display(path_style)
                                         )),
                                         // See note in worktree.rs where this error originates. Returning Some in this case prevents
                                         // the error popup from saying "Try Again", which is a red herring in this case
-                                        ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
+                                        ErrorCode::Internal
+                                            if e.to_string().contains("File is too large to load") =>
+                                        {
+                                            Some(e.to_string())
+                                        }
                                         _ => None,
-                                    }
-                                });
+                                    },
+                                );
+                            }
 
                             if let Some(project_panel) = project_panel.upgrade() {
                                 // Always select and mark the entry, regardless of whether it is opened or not.

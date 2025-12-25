@@ -945,8 +945,32 @@ impl Global for GlobalAppState {}
 
 pub struct WorkspaceStore {
     workspaces: HashSet<WindowHandle<Workspace>>,
+    window_groups: HashMap<ProjectKey, WorkspaceWindowGroup>,
     client: Arc<Client>,
     _subscriptions: Vec<client::Subscription>,
+}
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub struct ProjectKey(EntityId);
+
+impl ProjectKey {
+    pub fn for_project(project: &Entity<Project>) -> Self {
+        Self(project.entity_id())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceWindowGroup {
+    pub project_key: ProjectKey,
+    pub primary: WindowId,
+    pub secondaries: HashSet<WindowId>,
+    pub active_editor_window: Option<WindowId>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceWindowRole {
+    Primary,
+    SecondaryEditor,
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, PartialOrd, Ord)]
@@ -1173,6 +1197,7 @@ pub struct Workspace {
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
     project: Entity<Project>,
+    role: WorkspaceWindowRole,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
     window_edited: bool,
@@ -1232,6 +1257,24 @@ impl Workspace {
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
         app_state: Arc<AppState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_with_role(
+            workspace_id,
+            project,
+            app_state,
+            WorkspaceWindowRole::Primary,
+            window,
+            cx,
+        )
+    }
+
+    pub fn new_with_role(
+        workspace_id: Option<WorkspaceId>,
+        project: Entity<Project>,
+        app_state: Arc<AppState>,
+        role: WorkspaceWindowRole,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1419,14 +1462,17 @@ impl Workspace {
         cx.subscribe_in(&center_pane, window, Self::handle_pane_event)
             .detach();
 
+        let window_handle = window.window_handle().downcast::<Workspace>().unwrap();
+        let window_id = window_handle.window_id();
+        let project_key = ProjectKey::for_project(&project);
+        app_state.workspace_store.update(cx, |store, _| {
+            store.workspaces.insert(window_handle.clone());
+            store.register_workspace_window(project_key, window_id, role);
+        });
+
         window.focus(&center_pane.focus_handle(cx), cx);
 
         cx.emit(Event::PaneAdded(center_pane.clone()));
-
-        let window_handle = window.window_handle().downcast::<Workspace>().unwrap();
-        app_state.workspace_store.update(cx, |store, _| {
-            store.workspaces.insert(window_handle);
-        });
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user();
         let mut connection_status = app_state.client.status();
@@ -1551,9 +1597,12 @@ impl Workspace {
                 GlobalTheme::reload_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
-                this.app_state.workspace_store.update(cx, move |store, _| {
+                let workspace_store = this.app_state.workspace_store.clone();
+                let project_key = ProjectKey::for_project(&this.project);
+                workspace_store.update(cx, move |store, _| {
                     store.workspaces.remove(&window_handle);
-                })
+                    store.unregister_workspace_window(project_key, window_id);
+                });
             }),
         ];
 
@@ -1587,6 +1636,7 @@ impl Workspace {
             bottom_dock,
             right_dock,
             project: project.clone(),
+            role,
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
@@ -2433,14 +2483,84 @@ impl Workspace {
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
-        let prepare = self.prepare_to_close(CloseIntent::CloseWindow, window, cx);
-        cx.spawn_in(window, async move |_, cx| {
-            if prepare.await? {
-                cx.update(|window, _cx| window.remove_window())?;
+        match self.role {
+            WorkspaceWindowRole::SecondaryEditor => {
+                let prepare = self.prepare_to_close(CloseIntent::CloseWindow, window, cx);
+                cx.spawn_in(window, async move |_, cx| {
+                    if prepare.await? {
+                        cx.update(|window, _cx| window.remove_window())?;
+                    }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx)
             }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx)
+            WorkspaceWindowRole::Primary => {
+                let workspace_store = self.app_state.workspace_store.clone();
+                let project_key = ProjectKey::for_project(&self.project);
+                let secondary_windows = workspace_store.read_with(cx, |store, _| {
+                    let secondary_ids = store
+                        .secondary_windows_for_project(project_key)
+                        .into_iter()
+                        .collect::<HashSet<_>>();
+
+                    store
+                        .workspaces
+                        .iter()
+                        .filter(|workspace| secondary_ids.contains(&workspace.window_id()))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+
+                cx.spawn_in(window, async move |this_window, cx| {
+                    for secondary_window in &secondary_windows {
+                        let prepare_secondary = secondary_window.update(cx, |workspace, window, cx| {
+                            workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                        })?;
+
+                        if !prepare_secondary.await? {
+                            for secondary_window in &secondary_windows {
+                                secondary_window
+                                    .update(cx, |workspace, _window, _cx| {
+                                        workspace.removing = false;
+                                    })
+                                    .log_err();
+                            }
+                            return anyhow::Ok(());
+                        }
+                    }
+
+                    let prepare_primary = this_window.update_in(cx, |workspace, window, cx| {
+                        workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                    })?;
+
+                    if !prepare_primary.await? {
+                        for secondary_window in &secondary_windows {
+                            secondary_window
+                                .update(cx, |workspace, _window, _cx| {
+                                    workspace.removing = false;
+                                })
+                                .log_err();
+                        }
+                        this_window
+                            .update(cx, |workspace, _cx| {
+                                workspace.removing = false;
+                            })
+                            .log_err();
+                        return anyhow::Ok(());
+                    }
+
+                    for secondary_window in secondary_windows {
+                        secondary_window
+                            .update(cx, |_, window, _cx| window.remove_window())
+                            .log_err();
+                    }
+
+                    cx.update(|window, _cx| window.remove_window())?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx)
+            }
+        }
     }
 
     pub fn move_focused_panel_to_next_position(
@@ -4227,6 +4347,12 @@ impl Workspace {
         self.update_active_view_for_followers(window, cx);
         pane.update(cx, |pane, _| {
             pane.track_alternate_file_items();
+        });
+
+        let project_key = ProjectKey::for_project(&self.project);
+        let window_id = window.window_handle().window_id();
+        self.app_state.workspace_store.update(cx, |store, _| {
+            store.set_active_editor_window_for_project(project_key, window_id);
         });
 
         cx.notify();
@@ -6263,7 +6389,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn test_app_state_for_project(project: &Entity<Project>, cx: &mut App) -> Arc<AppState> {
         use node_runtime::NodeRuntime;
         use session::Session;
 
@@ -6271,8 +6397,8 @@ impl Workspace {
         let user_store = project.read(cx).user_store();
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
-        window.activate_window();
-        let app_state = Arc::new(AppState {
+
+        Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
             client,
@@ -6281,12 +6407,36 @@ impl Workspace {
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
             session,
-        });
-        let workspace = Self::new(Default::default(), project, app_state, window, cx);
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new_with_shared_app_state(
+        project: Entity<Project>,
+        app_state: Arc<AppState>,
+        role: WorkspaceWindowRole,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        window.activate_window();
+        let workspace =
+            Self::new_with_role(Default::default(), project, app_state, role, window, cx);
         workspace
             .active_pane
             .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
         workspace
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let app_state = Self::test_app_state_for_project(&project, cx);
+        Self::test_new_with_shared_app_state(
+            project,
+            app_state,
+            WorkspaceWindowRole::Primary,
+            window,
+            cx,
+        )
     }
 
     pub fn register_action<A: Action>(
@@ -7470,12 +7620,113 @@ impl WorkspaceStore {
     pub fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
             workspaces: Default::default(),
+            window_groups: Default::default(),
             _subscriptions: vec![
                 client.add_request_handler(cx.weak_entity(), Self::handle_follow),
                 client.add_message_handler(cx.weak_entity(), Self::handle_update_followers),
             ],
             client,
         }
+    }
+
+    pub fn register_workspace_window(
+        &mut self,
+        project_key: ProjectKey,
+        window_id: WindowId,
+        role: WorkspaceWindowRole,
+    ) {
+        let group = self
+            .window_groups
+            .entry(project_key)
+            .or_insert_with(|| WorkspaceWindowGroup {
+                project_key,
+                primary: window_id,
+                secondaries: HashSet::default(),
+                active_editor_window: Some(window_id),
+            });
+
+        match role {
+            WorkspaceWindowRole::Primary => {
+                group.secondaries.remove(&window_id);
+                group.primary = window_id;
+            }
+            WorkspaceWindowRole::SecondaryEditor => {
+                group.secondaries.insert(window_id);
+            }
+        }
+
+        if let Some(active) = group.active_editor_window {
+            let active_exists = active == group.primary || group.secondaries.contains(&active);
+            if !active_exists {
+                group.active_editor_window = Some(group.primary);
+            }
+        } else {
+            group.active_editor_window = Some(window_id);
+        }
+    }
+
+    pub fn unregister_workspace_window(&mut self, project_key: ProjectKey, window_id: WindowId) {
+        let Some(group) = self.window_groups.get_mut(&project_key) else {
+            return;
+        };
+
+        if group.primary == window_id {
+            self.window_groups.remove(&project_key);
+            return;
+        }
+
+        group.secondaries.remove(&window_id);
+
+        if group.active_editor_window == Some(window_id) {
+            group.active_editor_window = Some(group.primary);
+        }
+    }
+
+    pub fn set_active_editor_window_for_project(
+        &mut self,
+        project_key: ProjectKey,
+        window_id: WindowId,
+    ) {
+        let group = self
+            .window_groups
+            .entry(project_key)
+            .or_insert_with(|| WorkspaceWindowGroup {
+                project_key,
+                primary: window_id,
+                secondaries: HashSet::default(),
+                active_editor_window: Some(window_id),
+            });
+
+        let exists = group.primary == window_id || group.secondaries.contains(&window_id);
+        if exists {
+            group.active_editor_window = Some(window_id);
+        }
+    }
+
+    pub fn active_editor_window_for_project(&self, project_key: ProjectKey) -> Option<WindowId> {
+        self.window_groups
+            .get(&project_key)
+            .and_then(|group| group.active_editor_window)
+    }
+
+    pub fn primary_window_for_project(&self, project_key: ProjectKey) -> Option<WindowId> {
+        self.window_groups
+            .get(&project_key)
+            .map(|group| group.primary)
+    }
+
+    pub fn secondary_windows_for_project(&self, project_key: ProjectKey) -> Vec<WindowId> {
+        self.window_groups
+            .get(&project_key)
+            .map(|group| group.secondaries.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn workspace_window_for_id(&self, window_id: WindowId) -> Option<WindowHandle<Workspace>> {
+        self.workspaces
+            .iter()
+            .find(|workspace| workspace.window_id() == window_id)
+            .cloned()
     }
 
     pub fn update_followers(
@@ -9000,7 +9251,7 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
-    use project::{Project, ProjectEntryId};
+    use project::{Project, ProjectEntryId, ProjectPath};
     use serde_json::json;
     use settings::SettingsStore;
     use util::rel_path::rel_path;
@@ -9146,6 +9397,169 @@ mod tests {
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+    }
+
+    #[gpui::test]
+    async fn test_cross_window_sync_shared_buffer_and_dirty_state(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one.txt": "hello" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let app_state = cx.update({
+            let project = project.clone();
+            move |cx| Workspace::test_app_state_for_project(&project, cx)
+        });
+
+        let (_, _) = cx.add_window_view({
+            let project = project.clone();
+            let app_state = app_state.clone();
+            move |window, cx| {
+                Workspace::test_new_with_shared_app_state(
+                    project.clone(),
+                    app_state.clone(),
+                    WorkspaceWindowRole::Primary,
+                    window,
+                    cx,
+                )
+            }
+        });
+        let (_, _) = cx.add_window_view({
+            let project = project.clone();
+            let app_state = app_state.clone();
+            move |window, cx| {
+                Workspace::test_new_with_shared_app_state(
+                    project.clone(),
+                    app_state.clone(),
+                    WorkspaceWindowRole::SecondaryEditor,
+                    window,
+                    cx,
+                )
+            }
+        });
+
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let path = ProjectPath {
+            worktree_id,
+            path: rel_path("one.txt").into(),
+        };
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
+            .await
+            .unwrap();
+        let buffer_again = project
+            .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
+            .await
+            .unwrap();
+        assert_eq!(buffer.entity_id(), buffer_again.entity_id());
+
+        cx.update(|cx| {
+            let primary_window = cx.windows()[0].downcast::<Workspace>().unwrap();
+            let secondary_window = cx.windows()[1].downcast::<Workspace>().unwrap();
+
+            assert_eq!(
+                primary_window.read(cx).unwrap().project.entity_id(),
+                project.entity_id()
+            );
+            assert_eq!(
+                secondary_window.read(cx).unwrap().project.entity_id(),
+                project.entity_id()
+            );
+
+            let open_buffer = project.read(cx).get_open_buffer(&path, cx).unwrap();
+            assert_eq!(open_buffer.entity_id(), buffer.entity_id());
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "x")], None, cx);
+        });
+
+        cx.update(|cx| {
+            assert!(buffer.read(cx).is_dirty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_close_window_semantics_primary_and_secondary(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let app_state = cx.update({
+            let project = project.clone();
+            move |cx| Workspace::test_app_state_for_project(&project, cx)
+        });
+
+        let (_, _) = cx.add_window_view({
+            let project = project.clone();
+            let app_state = app_state.clone();
+            move |window, cx| {
+                Workspace::test_new_with_shared_app_state(
+                    project.clone(),
+                    app_state.clone(),
+                    WorkspaceWindowRole::Primary,
+                    window,
+                    cx,
+                )
+            }
+        });
+        let (_, _) = cx.add_window_view({
+            let project = project.clone();
+            let app_state = app_state.clone();
+            move |window, cx| {
+                Workspace::test_new_with_shared_app_state(
+                    project.clone(),
+                    app_state.clone(),
+                    WorkspaceWindowRole::SecondaryEditor,
+                    window,
+                    cx,
+                )
+            }
+        });
+
+        let secondary_window = cx.update(|cx| cx.windows()[1].downcast::<Workspace>().unwrap());
+
+        secondary_window
+            .update(cx, |workspace, window, cx| {
+                workspace.close_window(&CloseWindow, window, cx)
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(window_count, 1);
+
+        let (_, _) = cx.add_window_view({
+            let project = project.clone();
+            let app_state = app_state.clone();
+            move |window, cx| {
+                Workspace::test_new_with_shared_app_state(
+                    project.clone(),
+                    app_state.clone(),
+                    WorkspaceWindowRole::SecondaryEditor,
+                    window,
+                    cx,
+                )
+            }
+        });
+
+        let primary_window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
+
+        primary_window
+            .update(cx, |workspace, window, cx| {
+                workspace.close_window(&CloseWindow, window, cx)
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(window_count, 0);
     }
 
     #[gpui::test]

@@ -9,9 +9,10 @@
 
 **Purpose**: Establish a clean baseline and ensure the existing test harness is working before introducing multi-window behavior.
 
-- [ ] T001 Run baseline tests for touched crates: `cargo test -p workspace -p project_panel` (repo root: `Cargo.toml`)
-- [ ] T002 Run baseline linting for touched code: `./script/clippy` (repo root: `script/clippy`)
-- [ ] T003 [P] Identify current call sites for window creation + project tree open (targets: `crates/workspace/src/workspace.rs`, `crates/project_panel/src/project_panel.rs`, `crates/zed/src/zed.rs`)
+- [x] T001 Run baseline tests for touched crates: `cargo test -p workspace -p project_panel` (repo root: `Cargo.toml`)
+- [x] T002 Run baseline linting for touched code: `./script/clippy` (repo root: `script/clippy`)
+- [x] T003 [P] Identify current call sites for window creation + project tree open (targets: `crates/workspace/src/workspace.rs`, `crates/project_panel/src/project_panel.rs`, `crates/zed/src/zed.rs`)
+ 
 
 ---
 
@@ -21,13 +22,13 @@
 
 **⚠️ CRITICAL**: No user story implementation should proceed until this phase is complete.
 
-- [ ] T004 Add `WorkspaceWindowRole` + `role` field on `Workspace` with default `Primary` in `crates/workspace/src/workspace.rs`
-- [ ] T005 [P] Add `ProjectKey` and `WorkspaceWindowGroup` types in `crates/workspace/src/workspace.rs`
-- [ ] T006 Extend `WorkspaceStore` to track window groups + active editor window per `ProjectKey` in `crates/workspace/src/workspace.rs`
-- [ ] T007 Wire `Workspace` creation/destruction to register/unregister its `WindowId` in `WorkspaceStore` in `crates/workspace/src/workspace.rs`
-- [ ] T008 Update `Workspace::handle_pane_focused(...)` to record the active editor window for the project in `WorkspaceStore` in `crates/workspace/src/workspace.rs`
-- [ ] T009 Add `WorkspaceStore` query helpers (`active_editor_window_for_project`, `primary_window_for_project`, `secondary_windows_for_project`) in `crates/workspace/src/workspace.rs`
-- [ ] T010 [P] Add test-only helpers to create two `Workspace` windows sharing the same `Project` and `AppState` in `crates/workspace/src/workspace.rs`
+- [x] T004 Add `WorkspaceWindowRole` + `role` field on `Workspace` with default `Primary` in `crates/workspace/src/workspace.rs`
+- [x] T005 [P] Add `ProjectKey` and `WorkspaceWindowGroup` types in `crates/workspace/src/workspace.rs`
+- [x] T006 Extend `WorkspaceStore` to track window groups + active editor window per `ProjectKey` in `crates/workspace/src/workspace.rs`
+- [x] T007 Wire `Workspace` creation/destruction to register/unregister its `WindowId` in `WorkspaceStore` in `crates/workspace/src/workspace.rs`
+- [x] T008 Update `Workspace::handle_pane_focused(...)` to record the active editor window for the project in `WorkspaceStore` in `crates/workspace/src/workspace.rs`
+- [x] T009 Add `WorkspaceStore` query helpers (`active_editor_window_for_project`, `primary_window_for_project`, `secondary_windows_for_project`) in `crates/workspace/src/workspace.rs`
+- [x] T010 [P] Add test-only helpers to create two `Workspace` windows sharing the same `Project` and `AppState` in `crates/workspace/src/workspace.rs`
 
 **Checkpoint**: Foundation ready — multi-window behavior can now be implemented and tested.
 
@@ -43,9 +44,9 @@
 
 > Write these tests early so they fail (or demonstrate missing behavior) before the full implementation lands.
 
-- [ ] T011 [P] [US1] Add GPUI test for cross-window sync (shared buffer + dirty state) in `crates/workspace/src/workspace.rs`
-- [ ] T012 [P] [US1] Add GPUI test for active-editor-window routing from project tree open event in `crates/project_panel/src/project_panel_tests.rs`
-- [ ] T013 [P] [US1] Add GPUI test for close semantics: secondary closes self; primary closes all windows in group in `crates/workspace/src/workspace.rs`
+- [x] T011 [P] [US1] Add GPUI test for cross-window sync (shared buffer + dirty state) in `crates/workspace/src/workspace.rs`
+- [x] T012 [P] [US1] Add GPUI test for active-editor-window routing from project tree open event in `crates/project_panel/src/project_panel_tests.rs`
+- [x] T013 [P] [US1] Add GPUI test for close semantics: secondary closes self; primary closes all windows in group in `crates/workspace/src/workspace.rs`
 
 ### Implementation for User Story 1
 
@@ -53,7 +54,7 @@
 - [ ] T015 [US1] Register/handle `NewEditorWindow` in `crates/zed/src/zed.rs` to open a new GPUI window whose `Workspace` shares the same `Project` as the primary window
 - [ ] T016 [US1] Mark the newly created window’s workspace role as `SecondaryEditor` and ensure the primary window remains `Primary` in `crates/workspace/src/workspace.rs`
 - [ ] T017 [US1] Render secondary windows as editor-only (no project tree, no non-editor panels, no app-level chrome inside window content) in `crates/workspace/src/workspace.rs`
-- [ ] T018 [US1] Update `ProjectPanel` open handling to route to the active editor window (lookup via `WorkspaceStore`) in `crates/project_panel/src/project_panel.rs`
+- [x] T018 [US1] Update `ProjectPanel` open handling to route to the active editor window (lookup via `WorkspaceStore`) in `crates/project_panel/src/project_panel.rs`
 - [ ] T019 [US1] Ensure per-window tab reuse: opening a file already open in the target window activates the existing tab (verify/adjust via `Pane::open_item` usage) in `crates/workspace/src/workspace.rs`
 - [ ] T020 [US1] Ensure project-tree interaction does not overwrite active editor window selection (active editor window updates only on pane focus) in `crates/workspace/src/workspace.rs`
 - [ ] T021 [US1] Implement primary/secondary close semantics: primary triggers group-close (secondaries first, abort if canceled), secondary closes only itself in `crates/workspace/src/workspace.rs`

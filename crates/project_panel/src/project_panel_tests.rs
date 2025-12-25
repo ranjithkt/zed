@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, Pane,
+    WorkspaceWindowRole,
     item::{Item, ProjectItem},
     register_project_item,
 };
@@ -157,6 +158,81 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
         ]
     );
     ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+}
+
+#[gpui::test]
+async fn test_opening_file_routes_to_active_editor_window(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/src"),
+        json!({
+            "test": {
+                "first.rs": "// First Rust file",
+                "second.rs": "// Second Rust file",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
+    let app_state = cx.update({
+        let project = project.clone();
+        move |cx| Workspace::test_app_state_for_project(&project, cx)
+    });
+
+    let primary = cx.add_window(|window, cx| {
+        Workspace::test_new_with_shared_app_state(
+            project.clone(),
+            app_state.clone(),
+            WorkspaceWindowRole::Primary,
+            window,
+            cx,
+        )
+    });
+    let secondary = cx.add_window(|window, cx| {
+        Workspace::test_new_with_shared_app_state(
+            project.clone(),
+            app_state.clone(),
+            WorkspaceWindowRole::SecondaryEditor,
+            window,
+            cx,
+        )
+    });
+
+    let cx = &mut VisualTestContext::from_window(*primary, cx);
+    let panel = primary.update(cx, ProjectPanel::new).unwrap();
+    cx.run_until_parked();
+
+    // Make the secondary window the active editor window.
+    secondary
+        .update(cx, |workspace, window, cx| {
+            let focus_handle = workspace.focus_handle(cx);
+            window.focus(&focus_handle, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "src/test", cx);
+    select_path(&panel, "src/test/first.rs", cx);
+    panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
+    cx.executor().run_until_parked();
+
+    ensure_single_file_is_opened(&secondary, "test/first.rs", cx);
+    primary
+        .update(cx, |workspace, _, cx| {
+            let open_project_paths = workspace
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert!(
+                open_project_paths.is_empty(),
+                "Primary window should not open the file when routing to the active editor window"
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
