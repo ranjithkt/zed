@@ -76,37 +76,96 @@
 
 ---
 
-## Phase 4: User Story 2 - Switch between windows efficiently (Priority: P2)
+## Phase 4: User Story 4 - Secondary Window Enhancements (Priority: P2) 🎯
+
+**Goal**: Extend secondary windows with essential productivity features: Run/Debug actions, minimal status bar with cursor position, Outline Panel toggle, and drag-tab-to-monitor window creation.
+
+**Independent Test**: Follow `specs/001-multi-window/quickstart.md` User Story 4 section to verify all acceptance scenarios.
+
+### Research for User Story 4
+
+- [ ] T031 [P] [US4] Investigate Run/Debug action dispatch path from editor inline buttons in `crates/editor/src/editor.rs`
+- [ ] T032 [P] [US4] Examine existing status bar architecture in `crates/workspace/src/status_bar.rs`
+- [ ] T033 [P] [US4] Examine OutlinePanel integration with Workspace in `crates/outline_panel/src/outline_panel.rs`
+- [ ] T034 [P] [US4] Investigate tab drag-drop and GPUI display APIs in `crates/workspace/src/pane.rs` and `crates/gpui/src`
+
+### Tests for User Story 4 (required for behavior changes) ⚠️
+
+- [ ] T035 [P] [US4] Add GPUI test for Run/Debug action dispatch from secondary window in `crates/workspace/src/workspace.rs`
+- [ ] T036 [P] [US4] Add GPUI test for status bar cursor position updates in secondary window in `crates/workspace/src/workspace.rs`
+- [ ] T037 [P] [US4] Add GPUI test for Outline Panel toggle and content updates in secondary window in `crates/workspace/src/workspace.rs`
+- [ ] T038 [P] [US4] Add GPUI test for drag-to-monitor window creation in `crates/workspace/src/pane.rs`
+
+### Implementation: FR-019 - Run/Debug actions in secondary windows
+
+- [ ] T039 [US4] Identify why Run/Debug actions fail in secondary windows (trace action dispatch) in `crates/editor/src/editor.rs`
+- [ ] T040 [US4] Ensure Run/Debug actions are registered in secondary window's action context in `crates/zed/src/zed.rs`
+- [ ] T041 [US4] Verify task output appears correctly (in primary window terminal if needed) in `crates/terminal_view/src/terminal_view.rs`
+
+### Implementation: FR-020 - Minimal status bar
+
+- [ ] T042 [US4] Add conditional rendering for secondary window status bar in `crates/workspace/src/status_bar.rs`
+- [ ] T043 [US4] Implement cursor row/column display component for secondary status bar in `crates/workspace/src/status_bar.rs`
+- [ ] T044 [US4] Subscribe to active editor cursor position changes in `crates/workspace/src/workspace.rs`
+- [ ] T045 [US4] Update `Workspace::render()` to show minimal status bar for `SecondaryEditor` role in `crates/workspace/src/workspace.rs`
+
+### Implementation: FR-021 - Outline Panel toggle
+
+- [ ] T046 [US4] Add Outline Panel toggle button to secondary status bar in `crates/workspace/src/status_bar.rs`
+- [ ] T047 [US4] Add `outline_panel_visible` state to secondary workspace in `crates/workspace/src/workspace.rs`
+- [ ] T048 [US4] Implement Outline Panel mounting for secondary windows (dock or inline) in `crates/workspace/src/workspace.rs`
+- [ ] T049 [US4] Wire OutlinePanel to secondary window's active item changes in `crates/outline_panel/src/outline_panel.rs`
+- [ ] T050 [US4] Ensure Outline Panel updates when switching tabs in secondary window in `crates/outline_panel/src/outline_panel.rs`
+
+### Implementation: FR-022 - Drag tab to monitor
+
+- [ ] T051 [US4] Extend Pane drag-drop to detect drops outside window bounds in `crates/workspace/src/pane.rs`
+- [ ] T052 [US4] Implement monitor detection using `cx.displays()` API in `crates/workspace/src/pane.rs`
+- [ ] T053 [US4] Create secondary window on target monitor with dragged item in `crates/workspace/src/workspace.rs`
+- [ ] T054 [US4] Handle edge case: drop between monitors (use nearest monitor) in `crates/workspace/src/pane.rs`
+- [ ] T055 [US4] Handle DPI scaling differences between monitors in `crates/workspace/src/workspace.rs`
+
+### Validation for User Story 4
+
+- [ ] T056 [US4] Run focused tests: `cargo test -p workspace -p editor -p outline_panel` (repo root)
+- [ ] T057 [US4] Run quickstart manual validation (US4 section) in `specs/001-multi-window/quickstart.md`
+
+**Checkpoint**: User Story 4 complete — secondary windows have Run/Debug, status bar, outline panel, and drag-to-monitor features.
+
+---
+
+## Phase 5: User Story 2 - Switch between windows efficiently (Priority: P2)
 
 **Goal**: Provide a dedicated window-switching mechanism beyond OS switching.
 
 **Independent Test**: Open multiple windows and switch focus via the dedicated mechanism.
 
-> Note: The current implementation plan is MVP-only. These tasks capture the next-step work needed to plan and implement US2 without expanding the MVP scope.
+> Note: Tasks capture next-step work to plan and implement US2.
 
-- [ ] T026 [US2] Audit existing window switch actions (`ActivateNextWindow` / `ActivatePreviousWindow`) and their handlers in `crates/workspace/src/workspace.rs`
-- [ ] T027 [US2] Extend `specs/001-multi-window/plan.md` with a concrete US2 design (UI entry point + keybinding expectations) in `specs/001-multi-window/plan.md`
+- [ ] T058 [US2] Audit existing window switch actions (`ActivateNextWindow` / `ActivatePreviousWindow`) and their handlers in `crates/workspace/src/workspace.rs`
+- [ ] T059 [US2] Extend `specs/001-multi-window/plan.md` with a concrete US2 design (UI entry point + keybinding expectations) in `specs/001-multi-window/plan.md`
 
 ---
 
-## Phase 5: User Story 3 - Expand multi-window beyond MVP (Priority: P3)
+## Phase 6: User Story 3 - Expand multi-window beyond MVP (Priority: P3)
 
 **Goal**: Add post-MVP capabilities (tab moving, session restore, etc.).
 
 **Independent Test**: Validate each added capability independently (tab move, restore, etc.).
 
-> Note: The current implementation plan is MVP-only. These tasks capture planning work for later phases.
+> Note: Tasks capture planning work for later phases.
 
-- [ ] T028 [US3] Add a follow-up design section for tab moving + session restore in `specs/001-multi-window/plan.md`
+- [ ] T060 [US3] Add a follow-up design section for tab moving + session restore in `specs/001-multi-window/plan.md`
 
 ---
 
-## Phase 6: Polish & Cross-Cutting Concerns
+## Phase 7: Polish & Cross-Cutting Concerns
 
 **Purpose**: Finish quality gates and reduce regression risk.
 
-- [ ] T029 [P] Re-run `./script/clippy` after implementation changes (repo root: `script/clippy`)
-- [ ] T030 Ensure the spec checklist remains accurate after implementation decisions in `specs/001-multi-window/checklists/requirements.md`
+- [ ] T061 [P] Re-run `./script/clippy` after implementation changes (repo root: `script/clippy`)
+- [ ] T062 Ensure the spec checklist remains accurate after implementation decisions in `specs/001-multi-window/checklists/requirements.md`
+- [ ] T063 [P] Investigate and fix BUG-001 (window not found errors on secondary close) in `crates/workspace/src/workspace.rs`
 
 ---
 
@@ -114,40 +173,50 @@
 
 ### Phase Dependencies
 
-- **Phase 1 (Setup)** → **Phase 2 (Foundational)** → **Phase 3 (US1 / MVP)**
-- **US2/US3 phases** are optional follow-ups and should not block MVP delivery.
+- **Phase 1 (Setup)** → **Phase 2 (Foundational)** → **Phase 3 (US1 / MVP)** ✅ Complete
+- **Phase 4 (US4)**: Can start immediately (builds on MVP foundation)
+- **Phase 5 (US2)** and **Phase 6 (US3)**: Optional follow-ups
 
 ### User Story Dependencies
 
-- **US1** depends on Phase 2 only.
-- **US2** and **US3** should build on the MVP but can be planned/implemented later.
+- **US1** ✅ Complete
+- **US4** depends on US1 completion (uses secondary window infrastructure)
+- **US2** and **US3** can be planned/implemented after US4
 
-### Parallel Opportunities
+### Parallel Opportunities within US4
 
-- Tasks marked **[P]** can be worked in parallel (different files / low coupling).
-- Within US1, test writing tasks (T011–T013) can proceed in parallel with foundational scaffolding (T004–T010) once naming/entry points are agreed.
+- Research tasks (T031–T034) can run in parallel
+- Test tasks (T035–T038) can run in parallel after research
+- FR-019 (Run/Debug), FR-020 (Status Bar), FR-021 (Outline Panel), FR-022 (Drag-to-monitor) can be worked in parallel
 
 ---
 
-## Parallel Example: User Story 1
+## Parallel Example: User Story 4
 
 ```bash
-# Parallelizable (different files):
-# - Write sync test in workspace
-# - Write routing test in project_panel
-# - Implement WorkspaceStore grouping primitives
+# Research phase (parallelizable - different files):
+# - T031: Investigate Run/Debug in editor
+# - T032: Examine status bar architecture
+# - T033: Examine outline panel integration
+# - T034: Investigate drag-drop APIs
+
+# Implementation (parallelizable - different features):
+# - FR-019: Run/Debug fix (T039-T041)
+# - FR-020: Status bar (T042-T045)
+# - FR-021: Outline Panel (T046-T050)
+# - FR-022: Drag-to-monitor (T051-T055)
 ```
 
 ---
 
 ## Implementation Strategy
 
-### MVP First (User Story 1 Only)
+### Current Focus: User Story 4
 
-1. Complete Phases 1–2 (baseline + foundational primitives)
-2. Complete Phase 3 (US1) and verify with:
-   - `cargo test -p workspace -p project_panel`
-   - `specs/001-multi-window/quickstart.md`
-3. Stop and evaluate before starting US2/US3 planning/implementation.
+1. ✅ MVP Complete (Phases 1–3)
+2. Complete Phase 4 (US4) and verify with:
+   - `cargo test -p workspace -p editor -p outline_panel`
+   - `specs/001-multi-window/quickstart.md` (US4 section)
+3. Evaluate before starting US2/US3.
 
 
