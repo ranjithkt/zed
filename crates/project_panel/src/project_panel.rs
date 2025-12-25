@@ -64,8 +64,8 @@ use ui::{
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
-    DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
-    SplitDirection, Workspace,
+    DraggedSelection, NewEditorWindow, OpenInTerminal, OpenOptions, OpenVisible,
+    PreviewTabsSettings, SelectedEntry, SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
@@ -1149,6 +1149,9 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(!is_dir, |menu| {
+                                menu.action("Open in New Editor Window", Box::new(NewEditorWindow))
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -3182,6 +3185,36 @@ impl ProjectPanel {
                 )
             }
         }
+    }
+
+    fn open_in_new_editor_window(
+        &mut self,
+        _: &NewEditorWindow,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_sub_entry(cx) else {
+            return;
+        };
+
+        if entry.is_dir() {
+            return;
+        }
+
+        let worktree_id = worktree.read(cx).id();
+        let entry_id = entry.id;
+        let project_path = ProjectPath {
+            worktree_id,
+            path: entry.path.clone(),
+        };
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_in_new_editor_window(project_path, entry_id, cx);
+        });
     }
 
     pub fn new_search_in_directory(
@@ -5792,9 +5825,11 @@ impl Render for ProjectPanel {
                     el.on_action(cx.listener(Self::reveal_in_finder))
                         .on_action(cx.listener(Self::open_system))
                         .on_action(cx.listener(Self::open_in_terminal))
+                        .on_action(cx.listener(Self::open_in_new_editor_window))
                 })
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
+                        .on_action(cx.listener(Self::open_in_new_editor_window))
                 })
                 .track_focus(&self.focus_handle(cx))
                 .child(

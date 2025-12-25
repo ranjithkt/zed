@@ -1981,10 +1981,6 @@ impl Workspace {
         self.role == WorkspaceWindowRole::Primary
     }
 
-    fn should_show_titlebar(&self) -> bool {
-        self.role == WorkspaceWindowRole::Primary
-    }
-
     pub fn app_state(&self) -> &Arc<AppState> {
         &self.app_state
     }
@@ -2523,9 +2519,10 @@ impl Workspace {
 
                 cx.spawn_in(window, async move |this_window, cx| {
                     for secondary_window in &secondary_windows {
-                        let prepare_secondary = secondary_window.update(cx, |workspace, window, cx| {
-                            workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
-                        })?;
+                        let prepare_secondary =
+                            secondary_window.update(cx, |workspace, window, cx| {
+                                workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                            })?;
 
                         if !prepare_secondary.await? {
                             for secondary_window in &secondary_windows {
@@ -2587,7 +2584,7 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |_, cx| {
-            cx.update(|cx| {
+            let window = cx.update(|cx| {
                 let options = (app_state.build_window_options)(None, cx);
                 cx.open_window(options, {
                     let app_state = app_state.clone();
@@ -2605,7 +2602,69 @@ impl Workspace {
                         })
                     }
                 })
-            })
+            })??;
+
+            window
+                .update(cx, |_, window, cx| {
+                    cx.activate(true);
+                    window.activate_window();
+                })
+                .ok();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn open_in_new_editor_window(
+        &mut self,
+        project_path: ProjectPath,
+        _entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.role != WorkspaceWindowRole::Primary {
+            return;
+        }
+
+        let project = self.project.clone();
+        let app_state = self.app_state.clone();
+
+        cx.spawn(async move |_, cx| {
+            let window = cx.update(|cx| {
+                let options = (app_state.build_window_options)(None, cx);
+                cx.open_window(options, {
+                    let app_state = app_state.clone();
+                    let project = project.clone();
+                    let project_path = project_path.clone();
+                    move |window, cx| {
+                        let workspace = cx.new(|cx| {
+                            Workspace::new_with_role(
+                                None,
+                                project,
+                                app_state,
+                                WorkspaceWindowRole::SecondaryEditor,
+                                window,
+                                cx,
+                            )
+                        });
+                        workspace.update(cx, |workspace, cx| {
+                            workspace
+                                .open_path(project_path, None, true, window, cx)
+                                .detach_and_log_err(cx);
+                        });
+                        workspace
+                    }
+                })
+            })??;
+
+            window
+                .update(cx, |_, window, cx| {
+                    cx.activate(true);
+                    window.activate_window();
+                })
+                .ok();
+
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -7182,9 +7241,7 @@ impl Render for Workspace {
                 .items_start()
                 .text_color(colors.text)
                 .overflow_hidden()
-                .when(self.should_show_titlebar(), |this| {
-                    this.children(self.titlebar_item.clone())
-                })
+                .children(self.titlebar_item.clone())
                 .on_modifiers_changed(move |_, _, cx| {
                     for &id in &notification_entities {
                         cx.notify(id);

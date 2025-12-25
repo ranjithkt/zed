@@ -24,7 +24,7 @@ Implement editor-only secondary windows for a single project by reusing the exis
 **Project Type**: Rust workspace (multi-crate monorepo)  
 **Performance Goals**: Maintain interactive UI responsiveness (target: 60 fps feel) while routing opens across windows  
 **Constraints**: No panics in non-test code; propagate errors to UI (per constitution); avoid large refactors  
-**Scale/Scope**: MVP scoped to a single project’s primary window + any number of editor-only secondary windows
+**Scale/Scope**: MVP scoped to a single project's primary window + any number of editor-only secondary windows
 
 ## Constitution Check
 
@@ -60,7 +60,7 @@ specs/001-multi-window/
 ```text
 crates/
 ├── workspace/src/workspace.rs        # Window creation + close handling + focus events
-├── project_panel/src/project_panel.rs # Project tree open events
+├── project_panel/src/project_panel.rs # Project tree open events + context menu
 ├── project/src/buffer_store.rs       # Shared buffer cache by ProjectPath (enables sync)
 ├── zed/src/zed.rs                    # Action wiring / window-level behavior
 └── zed_actions/src/lib.rs            # Action definitions (if new MVP actions are added)
@@ -73,14 +73,14 @@ crates/
 Key findings (see `research.md`):
 
 - `ProjectPanel` opens entries by calling `Workspace::open_path_preview(...)` in the primary window context.
-- `Workspace::handle_pane_focused(...)` is a reliable “editor focus” signal (pane focus) that we can use to track the active editor window without being affected by project-tree focus.
-- `project::BufferStore::open_buffer(...)` caches by `ProjectPath`; if multiple windows share the same `Project` entity, the same file opens to the same buffer entity → content + dirty sync “for free”.
+- `Workspace::handle_pane_focused(...)` is a reliable "editor focus" signal (pane focus) that we can use to track the active editor window without being affected by project-tree focus.
+- `project::BufferStore::open_buffer(...)` caches by `ProjectPath`; if multiple windows share the same `Project` entity, the same file opens to the same buffer entity → content + dirty sync "for free".
 
 ## Phase 1: Design (MVP)
 
 ### Window roles and grouping
 
-- Treat each project’s window set as a **window group** with:
+- Treat each project's window set as a **window group** with:
   - exactly one **primary** window (project tree + full UI chrome)
   - zero or more **secondary editor** windows (editor-only chrome)
 - Implement grouping in `WorkspaceStore` (already global and already tracks all workspace windows).
@@ -90,7 +90,7 @@ Key findings (see `research.md`):
 - Track per-project **active editor window** via pane focus events:
   - update on `Workspace::handle_pane_focused(...)`
   - do not update on project tree focus or other panel focus
-- Route project-tree open events to the active editor window’s workspace:
+- Route project-tree open events to the active editor window's workspace:
   - if file already open in that window, activate existing tab
   - else open as new tab and activate
   - do not auto-focus the target window (window focus stays with OS / user)
@@ -99,7 +99,7 @@ Key findings (see `research.md`):
 
 - Create secondary windows using the **same `Project` entity** as the primary window.
 - Rely on existing `BufferStore` caching to share buffers across windows for the same file.
-- Ensure tab “dirty” is derived from the shared buffer so all windows display consistent indicators.
+- Ensure tab "dirty" is derived from the shared buffer so all windows display consistent indicators.
 
 ### Primary/secondary close semantics
 
@@ -108,6 +108,15 @@ Key findings (see `research.md`):
   - attempt to close secondary windows first (so unsaved work only open in secondaries is not lost)
   - if any close is canceled, abort the group close
   - otherwise close the primary last
+
+### UX Entry Points (CRITICAL)
+
+The "Open in New Editor Window" action MUST be discoverable via:
+
+1. **Project Tree Context Menu**: Right-click on any file/folder in the project tree → "Open in New Editor Window" menu item
+2. **Command Palette**: Available as `workspace: new editor window` for power users
+
+This addresses a key UX requirement: users expect context menu actions when right-clicking files, similar to other editors.
 
 ## Phase 2: Implementation Plan (MVP)
 
@@ -118,7 +127,7 @@ Key findings (see `research.md`):
   - window groups keyed by project entity id
   - the active editor window id per project
 
-### 2) Create “New Editor Window” (secondary) action
+### 2) Create "New Editor Window" (secondary) action
 
 - Add a new action (e.g. `workspace::NewEditorWindow`) wired only in the primary window.
 - Implement action to open a new GPUI window whose root view is a `Workspace` created with:
@@ -126,26 +135,31 @@ Key findings (see `research.md`):
   - role = `SecondaryEditor`
   - UI chrome suppressed (no docks / panels / menus inside window content)
 
-### 3) Render editor-only secondary windows
+### 3) Add context menu entry in Project Panel
+
+- In `ProjectPanel::deploy_context_menu()`, add "Open in New Window" action
+- The action dispatches `workspace::NewEditorWindow` which creates a secondary editor window
+
+### 4) Render editor-only secondary windows
 
 - Update `Workspace::render(...)` to conditionally render based on role:
   - Primary: existing full workspace UI (titlebar item, docks, status bar, notifications)
-  - Secondary: editor-only (center pane group + required overlays for tab usability)
+  - Secondary: editor-only (titlebar for window management + center pane group, no docks/panels/status bar)
 
-### 4) Track active editor window
+### 5) Track active editor window
 
 - In `Workspace::handle_pane_focused(...)`, update the active editor window for this project in `WorkspaceStore`.
 - Initialize the active editor window for a project when the primary workspace is created (or on first pane focus).
 
-### 5) Route project tree opens to the active editor window
+### 6) Route project tree opens to the active editor window
 
-- In `ProjectPanel`’s handler for `Event::OpenedEntry`, replace the direct call to `workspace.open_path_preview(...)` with:
+- In `ProjectPanel`'s handler for `Event::OpenedEntry`, replace the direct call to `workspace.open_path_preview(...)` with:
   - compute `ProjectPath`
   - look up active editor window for the project
-  - issue the open call in that target window’s `Workspace` via `WindowHandle<Workspace>::update(...)`
+  - issue the open call in that target window's `Workspace` via `WindowHandle<Workspace>::update(...)`
   - keep error prompts user-visible in the primary window if the open fails
 
-### 6) Close semantics
+### 7) Close semantics
 
 - Modify `Workspace::close_window(...)`:
   - Secondary: existing behavior (close only this window)
@@ -155,11 +169,11 @@ Key findings (see `research.md`):
 
 - Add a GPUI test that opens the same project in two windows that share a `Project` entity and asserts:
   - opening the same `ProjectPath` yields a shared buffer (via buffer identity or by observing that edits propagate)
-  - making an edit in one window updates the other window’s view of the same file and dirty state
+  - making an edit in one window updates the other window's view of the same file and dirty state
 - Add a test for routing logic:
   - set active editor window to window B
   - simulate project panel open request from window A
-  - assert the item is opened/activated in window B’s workspace
+  - assert the item is opened/activated in window B's workspace
 
 ## Crates / Dependencies
 

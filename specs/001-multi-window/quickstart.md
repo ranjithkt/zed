@@ -11,8 +11,11 @@ This is a developer-facing guide to manually validate the MVP behavior.
 
 ### Create an editor-only secondary window
 
-1. In the primary window, create a secondary editor window using the new MVP command (e.g. “New Editor Window”).
-2. Verify the secondary window shows **only editor tabs/editors** (no project tree, no non-editor panels).
+1. In the primary window, **right-click any file/folder in the project tree**.
+2. Select **"Open in New Editor Window"** from the context menu.
+3. Verify a new secondary window opens showing **only editor tabs/editors** (no project tree, no non-editor panels).
+
+**Alternative**: Use the command palette (Ctrl+Shift+P / Cmd+Shift+P) and search for "new editor window".
 
 ### Route project tree opens to the active editor window
 

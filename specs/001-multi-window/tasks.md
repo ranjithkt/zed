@@ -54,6 +54,8 @@
 - [x] T015 [US1] Register/handle `NewEditorWindow` in `crates/zed/src/zed.rs` to open a new GPUI window whose `Workspace` shares the same `Project` as the primary window
 - [x] T016 [US1] Mark the newly created window's workspace role as `SecondaryEditor` and ensure the primary window remains `Primary` in `crates/workspace/src/workspace.rs`
 - [x] T017 [US1] Render secondary windows as editor-only (no project tree, no non-editor panels, no app-level chrome inside window content) in `crates/workspace/src/workspace.rs`
+- [x] T017a [US1] Add "Open in New Editor Window" to project panel right-click context menu in `crates/project_panel/src/project_panel.rs`
+- [x] T017b [US1] Fix bug in `new_editor_window` async closure - correct error handling pattern for `cx.open_window` in `crates/workspace/src/workspace.rs`
 - [x] T018 [US1] Update `ProjectPanel` open handling to route to the active editor window (lookup via `WorkspaceStore`) in `crates/project_panel/src/project_panel.rs`
 - [x] T019 [US1] Ensure per-window tab reuse: opening a file already open in the target window activates the existing tab (verify/adjust via `Pane::open_item` usage) in `crates/workspace/src/workspace.rs`
 - [x] T020 [US1] Ensure project-tree interaction does not overwrite active editor window selection (active editor window updates only on pane focus) in `crates/workspace/src/workspace.rs`
