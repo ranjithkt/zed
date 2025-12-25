@@ -59,6 +59,24 @@ As a developer, I want multi-window workflows to feel complete so I can rely on 
 
 ---
 
+### User Story 4 - Secondary window enhancements (Priority: P2)
+
+As a developer, I want secondary editor windows to have essential productivity features so I can work efficiently without switching to the primary window.
+
+**Why this priority**: These enhancements make secondary windows more useful for focused editing workflows, especially on multi-monitor setups.
+
+**Independent Test**: Can be tested by using secondary windows with various editor features and drag-drop interactions.
+
+**Acceptance Scenarios**:
+
+1. **Given** a file with a `main()` function is open in a secondary window, **When** the user clicks the Run or Debug button beside the function, **Then** the action executes the same as it would in the primary window.
+2. **Given** a secondary window is open, **When** the user looks at the bottom of the window, **Then** they see a status bar showing the current cursor row/column position for the active editor tab.
+3. **Given** a secondary window has a status bar, **When** the user clicks the Outline Panel toggle in the status bar, **Then** an Outline Panel appears showing the document structure for the active editor tab.
+4. **Given** a secondary window has the Outline Panel open, **When** the user selects a different editor tab, **Then** the Outline Panel updates to show the structure of the newly selected file.
+5. **Given** a tab is open in the primary window, **When** the user drags that tab to a different monitor, **Then** a new secondary editor window opens on that monitor containing the dragged tab.
+
+---
+
 ### Edge Cases
 
 - Selecting a file in the project tree when there is no currently active editor window (for example, before any editor has been focused).
@@ -69,6 +87,10 @@ As a developer, I want multi-window workflows to feel complete so I can rely on 
 - Closing the primary window when there are unsaved changes in secondary windows.
 - Closing a secondary window while it has the only visible tab for an unsaved file.
 - Using multi-window on systems with multiple monitors / differing DPI scaling (ensure text and layout remain readable).
+- Triggering Run/Debug from a secondary window when no run configuration exists.
+- Dragging a tab to the edge between two monitors (determine which monitor receives the new window).
+- Dragging a tab when the target monitor has a different DPI scaling than the source.
+- Toggling Outline Panel when the active editor tab does not support document outline (for example, a plain text file).
 
 ## Requirements *(mandatory)*
 
@@ -96,19 +118,32 @@ As a developer, I want multi-window workflows to feel complete so I can rely on 
 - **FR-014**: Users MUST be able to switch to another open window using a dedicated window-switching mechanism.
 - **FR-015**: Users SHOULD be able to move an open tab from one window to another, including moving a tab into a newly created window.
 
+#### Next: Secondary window enhancements
+
+- **FR-019**: Run and Debug actions triggered from inline buttons (for example, beside a `main()` function) in a secondary editor window MUST execute the same as they would in the primary window.
+- **FR-020**: Secondary editor windows MUST display a minimal status bar showing the current cursor row and column position for the active editor tab.
+- **FR-021**: Secondary editor windows MUST provide a toggle in the status bar to show/hide an Outline Panel that displays document structure for the active editor tab.
+- **FR-022**: When a user drags a tab from the primary window to a different monitor, a new secondary editor window MUST open on that monitor containing the dragged tab.
+
 #### Later: Session continuity and scale
 
-- **FR-016**: The application SHOULD support restoring a prior multi-window session for a project, including window count and open tabs, when the user opts in.
-- **FR-017**: Common actions (open file, close tab, find, save) MUST behave consistently regardless of which window is active.
-- **FR-018**: If saving a file would overwrite newer on-disk content (for example, due to edits from another window or external tool), the user MUST be warned before data loss and MUST be given a clear choice to keep their changes or discard/reload.
+- **FR-023**: The application SHOULD support restoring a prior multi-window session for a project, including window count and open tabs, when the user opts in.
+
+#### Inherited Behavior (no implementation needed)
+
+All existing single-window behaviors (file conflict detection, save/discard prompts, undo/redo, find/replace, etc.) MUST continue to work in secondary windows without re-implementation. The multi-window feature inherits these behaviors from the shared `Project` and `BufferStore` infrastructure.
 
 ### Assumptions
 
-- There is exactly one “project window” that displays the project tree for a project.
-- Secondary windows are editor-only by design (editor tabs/editors only).
+- There is exactly one "project window" that displays the project tree for a project.
+- Secondary windows are editor-focused by design (editor tabs/editors plus minimal status bar and optional outline panel).
 - Each window has its own set of open tabs and active tab selection.
-- “Active editor window” is determined by the most recently focused editor area (not by clicking the project tree).
+- "Active editor window" is determined by the most recently focused editor area (not by clicking the project tree).
 - Closing the primary window is treated as closing the project and therefore closes all project windows.
+- Run/Debug actions in secondary windows use the same run configurations and targets as the primary window.
+- The Outline Panel in secondary windows uses the same outline provider infrastructure as in the primary window.
+- Tab drag-and-drop to monitors uses standard OS drag-and-drop APIs for detecting the drop target monitor.
+- All existing single-window editor behaviors (file conflict detection, undo/redo, find/replace, etc.) are inherited automatically via shared `Project`/`BufferStore` and do not require multi-window-specific implementation.
 
 ### Dependencies
 
@@ -118,21 +153,25 @@ As a developer, I want multi-window workflows to feel complete so I can rely on 
 ### Out of Scope (for the MVP in User Story 1)
 
 - Restoring multiple windows automatically on application restart.
-- Moving tabs between windows via drag-and-drop.
+- ~~Moving tabs between windows via drag-and-drop.~~ (Now in scope: FR-022 covers drag-to-monitor)
 - Advanced multi-window layouts (for example, multiple tab groups within a window beyond the existing single tab strip behavior).
 - Showing a project tree in secondary editor windows.
 - Tab management enhancements in secondary windows beyond basic tab open/close/activate (for example, tab reordering).
 - Synchronizing cursor position or selection between windows when the same file is open in multiple windows.
+- Full status bar in secondary windows (only row/column and outline toggle are in scope).
+- Other panels in secondary windows beyond Outline Panel (for example, file explorer, terminal).
 
 ### Key Entities *(include if feature involves data)*
 
 - **Project window**: The primary window that shows the project tree and an editor area.
-- **Editor window**: A secondary window that shows only editor tabs/editors.
+- **Editor window**: A secondary window that shows editor tabs/editors, a minimal status bar, and optionally an outline panel.
 - **Active editor window**: The window that most recently had editor focus and is the target for project-tree file opens.
-- **Project**: The set of folders/files the user is working in (the “workspace” context shared across windows).
+- **Project**: The set of folders/files the user is working in (the "workspace" context shared across windows).
 - **Tab**: An open item within a window that represents a file or other content.
 - **Document**: The editable representation of a file, including whether it has unsaved changes and its last known on-disk version.
 - **Session**: A restorable snapshot of open windows and their tabs for a project.
+- **Status bar (secondary)**: A minimal UI element showing cursor position (row/column) and panel toggles.
+- **Outline Panel**: A panel showing hierarchical document structure (functions, classes, headings) for the active editor.
 
 ## Success Criteria *(mandatory)*
 
@@ -143,3 +182,6 @@ As a developer, I want multi-window workflows to feel complete so I can rely on 
 - **SC-003**: In user testing, at least 90% of participants can successfully keep two windows with different tab sets and open files into the intended window without assistance.
 - **SC-004**: In all supported environments, secondary windows never show a project tree panel during normal use (verified via automated or manual regression checks).
 - **SC-005**: When the same file is open in two windows, text edits in one window appear in the other window within 1 second in at least 95% of attempts, and the unsaved/dirty indicator matches in both windows.
+- **SC-006**: Run/Debug actions triggered from secondary windows execute successfully in at least 95% of attempts where the same action would succeed in the primary window.
+- **SC-007**: The row/column indicator in the secondary window status bar updates within 100ms of cursor movement.
+- **SC-008**: Dragging a tab to a different monitor creates a new window on that monitor within 500ms of releasing the drag.

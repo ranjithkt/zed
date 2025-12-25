@@ -67,9 +67,12 @@
 ### Validation
 
 - [x] T024 [US1] Run focused tests after implementation: `cargo test -p workspace -p project_panel` (repo root: `Cargo.toml`)
-- [ ] T025 [US1] Run quickstart manual validation checklist in `specs/001-multi-window/quickstart.md`
+- [x] T025 [US1] Run quickstart manual validation checklist in `specs/001-multi-window/quickstart.md`
 
 **Checkpoint**: MVP complete — multi-window behavior is functional and testable independently.
+
+**Known Bugs** (to address post-MVP):
+- ⚠️ BUG-001: "window not found" errors appear in terminal when secondary window closes (race condition with Windows platform activation events). Non-blocking but should be investigated.
 
 ---
 
