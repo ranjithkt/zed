@@ -4716,7 +4716,15 @@ impl Workspace {
 
             cx.notify();
         } else {
-            self.active_item_path_changed(true, window, cx);
+            // The pane is the last one and couldn't be removed.
+            // For secondary editor windows, close the window when all tabs are closed.
+            if self.role == WorkspaceWindowRole::SecondaryEditor
+                && pane.read(cx).items_len() == 0
+            {
+                window.remove_window();
+            } else {
+                self.active_item_path_changed(true, window, cx);
+            }
         }
         cx.emit(Event::PaneRemoved);
     }
