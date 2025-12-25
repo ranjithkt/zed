@@ -1,11 +1,13 @@
-# Implementation Plan: Multi-Window Editing (MVP)
+# Implementation Plan: Multi-Window Editing (MVP + Enhancements)
 
 **Branch**: `[001-multi-window]` | **Date**: 2025-12-25 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `specs/001-multi-window/spec.md`
 
-**Note**: This template is filled in by the `/speckit.plan` command. See `.cursor/commands/speckit.plan.md` for the execution workflow.
+**Note**: This plan extends the completed MVP with User Story 4 (secondary window enhancements).
 
 ## Summary
+
+### MVP (Complete ✅)
 
 Implement editor-only secondary windows for a single project by reusing the existing `Workspace` + `Project` architecture:
 
@@ -14,27 +16,36 @@ Implement editor-only secondary windows for a single project by reusing the exis
 - Because buffers are owned/cached by the shared project (`BufferStore`), opening the same file in multiple windows yields a shared buffer, keeping **content and dirty indicators in sync**.
 - Closing behavior is role-aware: closing a secondary window closes only that window; closing the primary window closes the entire project window-group (primary + its secondaries).
 
+### Beyond MVP: User Story 4 (Secondary Window Enhancements)
+
+Extend secondary windows with essential productivity features:
+
+1. **Run/Debug actions** (FR-019): Fix bug where Run/Debug buttons beside `main()` functions don't execute from secondary windows.
+2. **Minimal status bar** (FR-020): Show cursor row/column position at the bottom of secondary windows.
+3. **Outline Panel toggle** (FR-021): Add status bar button to show/hide Outline Panel for document structure navigation.
+4. **Drag tab to monitor** (FR-022): When dragging a tab to a different monitor, open a new secondary window on that monitor.
+
 ## Technical Context
 
 **Language/Version**: Rust 1.92 (`rust-toolchain.toml`)  
-**Primary Dependencies**: GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`)  
-**Storage**: Local filesystem + existing workspace persistence (SQLite via `sqlez`) where already used; MVP avoids adding new persistence for secondary windows  
+**Primary Dependencies**: GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`, `crates/outline_panel`, `crates/editor`)  
+**Storage**: Local filesystem + existing workspace persistence (SQLite via `sqlez`) where already used  
 **Testing**: `cargo test` with GPUI tests (`#[gpui::test]`) and existing visual test helpers where applicable  
 **Target Platform**: macOS, Windows, Linux (same as existing Zed desktop targets)  
 **Project Type**: Rust workspace (multi-crate monorepo)  
-**Performance Goals**: Maintain interactive UI responsiveness (target: 60 fps feel) while routing opens across windows  
+**Performance Goals**: Maintain interactive UI responsiveness (target: 60 fps feel); status bar updates within 100ms; drag-drop window creation within 500ms  
 **Constraints**: No panics in non-test code; propagate errors to UI (per constitution); avoid large refactors  
-**Scale/Scope**: MVP scoped to a single project's primary window + any number of editor-only secondary windows
+**Scale/Scope**: Single project's primary window + any number of secondary editor windows with enhanced features
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-- **Ship small, desired changes**: MVP limited to window roles, open-routing, and shared-buffer window reuse.
+- **Ship small, desired changes**: Each feature (Run/Debug fix, status bar, outline panel, drag-to-monitor) is narrowly scoped.
 - **Rust correctness / no panics**: Plan avoids `unwrap()` in new code paths; error propagation to user prompts.
 - **GPUI entity safety**: All cross-window updates use `WindowHandle<T>::update` / `update_in` and avoid re-entrant entity updates.
-- **Tests required**: Add targeted tests around shared buffer sync + routing behavior.
-- **Repo hygiene**: Prefer extending existing files (`crates/workspace`, `crates/project_panel`) over new modules.
+- **Tests required**: Add targeted tests around new behaviors.
+- **Repo hygiene**: Prefer extending existing files (`crates/workspace`, `crates/outline_panel`) over new modules.
 
 ## Project Structure
 
@@ -44,13 +55,15 @@ Implement editor-only secondary windows for a single project by reusing the exis
 specs/001-multi-window/
 ├── spec.md
 ├── plan.md
-├── research.md
-├── data-model.md
+├── research.md          # Updated with US4 research
+├── data-model.md        # Updated with US4 entities
 ├── quickstart.md
 ├── contracts/
 │   ├── window-group-manager.md
 │   ├── project-tree-open-routing.md
-│   └── window-close-semantics.md
+│   ├── window-close-semantics.md
+│   ├── secondary-status-bar.md      # NEW
+│   └── drag-tab-to-monitor.md       # NEW
 └── checklists/
     └── requirements.md
 ```
@@ -59,125 +72,133 @@ specs/001-multi-window/
 
 ```text
 crates/
-├── workspace/src/workspace.rs        # Window creation + close handling + focus events
-├── project_panel/src/project_panel.rs # Project tree open events + context menu
-├── project/src/buffer_store.rs       # Shared buffer cache by ProjectPath (enables sync)
+├── workspace/src/workspace.rs        # Window creation, close handling, status bar rendering
+├── project_panel/src/project_panel.rs # Project tree open events
+├── project/src/buffer_store.rs       # Shared buffer cache (existing)
+├── outline_panel/src/outline_panel.rs # Outline panel (adapt for secondary windows)
+├── editor/src/editor.rs              # Cursor position events for status bar
 ├── zed/src/zed.rs                    # Action wiring / window-level behavior
-└── zed_actions/src/lib.rs            # Action definitions (if new MVP actions are added)
+└── zed_actions/src/lib.rs            # Action definitions
 ```
 
-**Structure Decision**: Implement MVP by extending existing Zed crates (`workspace`, `project_panel`, `zed`) and leaning on existing shared-buffer behavior (`project::BufferStore`). Avoid new crates unless a clear gap is discovered.
+**Structure Decision**: Implement by extending existing Zed crates. No new crates needed.
 
-## Phase 0: Research (completed)
+## Phase 0: Research (US4 Additions)
 
-Key findings (see `research.md`):
+### Research: Run/Debug actions in secondary windows
 
-- `ProjectPanel` opens entries by calling `Workspace::open_path_preview(...)` in the primary window context.
-- `Workspace::handle_pane_focused(...)` is a reliable "editor focus" signal (pane focus) that we can use to track the active editor window without being affected by project-tree focus.
-- `project::BufferStore::open_buffer(...)` caches by `ProjectPath`; if multiple windows share the same `Project` entity, the same file opens to the same buffer entity → content + dirty sync "for free".
+**Question**: Why don't Run/Debug inline buttons work in secondary windows?
 
-## Phase 1: Design (MVP)
+**Investigation approach**:
+- Trace the action dispatch path for `Run` and `Debug` actions from editor inline buttons
+- Check if actions require primary window context or specific workspace state
+- Identify where the action routing breaks for secondary windows
 
-### Window roles and grouping
+**Expected findings**:
+- Actions may be registered only in primary window's action context
+- Or actions may require panels/UI that are suppressed in secondary windows
 
-- Treat each project's window set as a **window group** with:
-  - exactly one **primary** window (project tree + full UI chrome)
-  - zero or more **secondary editor** windows (editor-only chrome)
-- Implement grouping in `WorkspaceStore` (already global and already tracks all workspace windows).
+### Research: Status bar architecture
 
-### Active editor window routing
+**Question**: How does the existing status bar work, and how to render a minimal version in secondary windows?
 
-- Track per-project **active editor window** via pane focus events:
-  - update on `Workspace::handle_pane_focused(...)`
-  - do not update on project tree focus or other panel focus
-- Route project-tree open events to the active editor window's workspace:
-  - if file already open in that window, activate existing tab
-  - else open as new tab and activate
-  - do not auto-focus the target window (window focus stays with OS / user)
+**Investigation approach**:
+- Examine `crates/workspace/src/status_bar.rs` and `StatusBar` component
+- Identify how cursor position is communicated from editor to status bar
+- Determine minimal status bar elements needed (row/column + outline toggle)
 
-### Cross-window sync (content + dirty indicators)
+### Research: Outline Panel in secondary windows
 
-- Create secondary windows using the **same `Project` entity** as the primary window.
-- Rely on existing `BufferStore` caching to share buffers across windows for the same file.
-- Ensure tab "dirty" is derived from the shared buffer so all windows display consistent indicators.
+**Question**: Can the existing Outline Panel work in secondary windows?
 
-### Primary/secondary close semantics
+**Investigation approach**:
+- Examine `crates/outline_panel` and how it integrates with `Workspace`
+- Check if outline panel requires docks (which are suppressed in secondary windows)
+- Identify alternative mounting approach for secondary windows
 
-- Closing a **secondary** window uses the existing per-window close flow (prompts as needed) and removes only that window.
-- Closing the **primary** window performs a **group close**:
-  - attempt to close secondary windows first (so unsaved work only open in secondaries is not lost)
-  - if any close is canceled, abort the group close
-  - otherwise close the primary last
+### Research: Drag tab to monitor detection
 
-### UX Entry Points (CRITICAL)
+**Question**: How to detect which monitor a tab is dragged to?
 
-The "Open in New Editor Window" action MUST be discoverable via:
+**Investigation approach**:
+- Examine existing tab drag-drop implementation in `crates/workspace/src/pane.rs`
+- Check GPUI's window positioning and monitor detection APIs
+- Identify platform-specific considerations (Windows, macOS, Linux)
 
-1. **Project Tree Context Menu**: Right-click on any file/folder in the project tree → "Open in New Editor Window" menu item
-2. **Command Palette**: Available as `workspace: new editor window` for power users
+**Output**: research.md updated with US4 decisions
 
-This addresses a key UX requirement: users expect context menu actions when right-clicking files, similar to other editors.
+## Phase 1: Design (US4)
 
-## Phase 2: Implementation Plan (MVP)
+### Run/Debug actions fix
 
-### 1) Add window role and project grouping
+- Ensure Run/Debug actions are registered in secondary window's action context
+- Actions should dispatch to the shared `Project` entity's task runner
+- No UI changes needed; just fix action routing
 
-- Add `WorkspaceWindowRole` (Primary / SecondaryEditor) stored on `Workspace`.
-- Extend `WorkspaceStore` to track:
-  - window groups keyed by project entity id
-  - the active editor window id per project
+### Secondary window status bar
 
-### 2) Create "New Editor Window" (secondary) action
+- Add a minimal `StatusBar` variant for secondary windows:
+  - Show only: cursor row/column (from active editor)
+  - Show only: Outline Panel toggle button
+  - Suppress: all other status bar items (language, git, diagnostics, etc.)
+- Update `Workspace::render(...)` to conditionally render minimal status bar for secondary windows
 
-- Add a new action (e.g. `workspace::NewEditorWindow`) wired only in the primary window.
-- Implement action to open a new GPUI window whose root view is a `Workspace` created with:
-  - the same `Project` entity as the primary
-  - role = `SecondaryEditor`
-  - UI chrome suppressed (no docks / panels / menus inside window content)
+### Outline Panel integration
 
-### 3) Add context menu entry in Project Panel
+- For secondary windows, mount Outline Panel differently:
+  - Option A: Use a right-side dock (if docks can be selectively enabled)
+  - Option B: Render inline as part of workspace content (beside editor)
+- Outline Panel subscribes to active editor changes in the workspace
+- Panel content updates when active tab changes
 
-- In `ProjectPanel::deploy_context_menu()`, add "Open in New Window" action
-- The action dispatches `workspace::NewEditorWindow` which creates a secondary editor window
+### Drag tab to monitor
 
-### 4) Render editor-only secondary windows
+- Extend tab drag-drop handling in `Pane`:
+  - On drop outside current window bounds, detect target monitor
+  - Create new secondary window positioned on that monitor
+  - Transfer the dragged item to the new window
+- Use GPUI's `cx.displays()` to enumerate monitors and determine drop target
 
-- Update `Workspace::render(...)` to conditionally render based on role:
-  - Primary: existing full workspace UI (titlebar item, docks, status bar, notifications)
-  - Secondary: editor-only (titlebar for window management + center pane group, no docks/panels/status bar)
+## Phase 2: Implementation Plan (US4)
 
-### 5) Track active editor window
+### 1) Fix Run/Debug actions in secondary windows
 
-- In `Workspace::handle_pane_focused(...)`, update the active editor window for this project in `WorkspaceStore`.
-- Initialize the active editor window for a project when the primary workspace is created (or on first pane focus).
+- Investigate action dispatch in `crates/editor/src/editor.rs` for inline run buttons
+- Ensure actions are wired in secondary window's `Workspace`
+- Test: Run/Debug from secondary window triggers task execution
 
-### 6) Route project tree opens to the active editor window
+### 2) Implement minimal status bar for secondary windows
 
-- In `ProjectPanel`'s handler for `Event::OpenedEntry`, replace the direct call to `workspace.open_path_preview(...)` with:
-  - compute `ProjectPath`
-  - look up active editor window for the project
-  - issue the open call in that target window's `Workspace` via `WindowHandle<Workspace>::update(...)`
-  - keep error prompts user-visible in the primary window if the open fails
+- Create `SecondaryStatusBar` component or conditional rendering in `StatusBar`
+- Subscribe to active editor's cursor position via `Editor::cursor_position()`
+- Add Outline Panel toggle button with icon
+- Wire toggle to show/hide Outline Panel in secondary window
 
-### 7) Close semantics
+### 3) Implement Outline Panel for secondary windows
 
-- Modify `Workspace::close_window(...)`:
-  - Secondary: existing behavior (close only this window)
-  - Primary: orchestrate group close (secondaries first), then close primary
+- Modify `Workspace::render()` to optionally show Outline Panel for secondary windows
+- Reuse existing `OutlinePanel` component
+- Subscribe to workspace's active item changes
+- Test: Outline Panel shows correct structure; updates on tab switch
 
-## Testing Plan (MVP)
+### 4) Implement drag tab to monitor
 
-- Add a GPUI test that opens the same project in two windows that share a `Project` entity and asserts:
-  - opening the same `ProjectPath` yields a shared buffer (via buffer identity or by observing that edits propagate)
-  - making an edit in one window updates the other window's view of the same file and dirty state
-- Add a test for routing logic:
-  - set active editor window to window B
-  - simulate project panel open request from window A
-  - assert the item is opened/activated in window B's workspace
+- Extend `Pane` drag-drop to detect external drops
+- On external drop, get cursor position and map to monitor
+- Create secondary window on target monitor with dragged item
+- Test: Drag tab to second monitor creates window there
+
+## Testing Plan (US4)
+
+- Add GPUI test for Run/Debug action dispatch from secondary window
+- Add GPUI test for status bar cursor position updates in secondary window
+- Add GPUI test for Outline Panel toggle and content updates
+- Add GPUI test for drag-to-monitor window creation (may require mock display setup)
 
 ## Crates / Dependencies
 
-- No new crates are expected for MVP. If a small helper is needed for window-group bookkeeping, prefer std collections (already used) and existing patterns in `WorkspaceStore`.
+- No new crates needed
+- May need to expose additional GPUI APIs for monitor detection if not already available
 
 ## Complexity Tracking
 

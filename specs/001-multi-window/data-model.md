@@ -79,4 +79,38 @@ Currently tracks the set of open `Workspace` windows. Extended for MVP with addi
   - orchestrate closing secondaries (prompt/save as needed)
   - if successful, close primary last and remove the group.
 
+---
+
+## User Story 4: Secondary Window Enhancements
+
+### Secondary Status Bar (new concept)
+
+Secondary windows display a minimal status bar with:
+
+- **Cursor position**: row and column from the active editor
+- **Outline Panel toggle**: button to show/hide the outline panel
+
+This is implemented as conditional rendering within the existing `StatusBar` based on `WorkspaceWindowRole::SecondaryEditor`.
+
+### Outline Panel State (extended)
+
+For secondary windows, the outline panel:
+
+- Subscribes to the workspace's active item (same as primary)
+- Renders document structure for the active editor
+- Can be toggled via status bar button
+- State: `outline_panel_visible: bool` per workspace
+
+### Drag-to-Monitor State
+
+When dragging a tab:
+
+- Track drag position in screen coordinates
+- On drop outside window bounds:
+  - Query `cx.displays()` for available monitors
+  - Find monitor containing drop position
+  - Create secondary window on that monitor at drop position
+
+No new persistent state; this is a transient drag operation.
+
 

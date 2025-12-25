@@ -1,6 +1,6 @@
-# Quickstart: Multi-Window Editing (MVP)
+# Quickstart: Multi-Window Editing (MVP + Enhancements)
 
-This is a developer-facing guide to manually validate the MVP behavior.
+This is a developer-facing guide to manually validate the multi-window behavior.
 
 ## Prerequisites
 
@@ -45,5 +45,44 @@ This is a developer-facing guide to manually validate the MVP behavior.
 2. Reopen a secondary window.
 3. Close the primary window:
    - Verify all windows for that project close.
+
+---
+
+## User Story 4: Secondary Window Enhancements
+
+### Run/Debug from secondary window
+
+1. Open a file with a `main()` function (e.g., Rust, Python, JavaScript) in a secondary window.
+2. Click the **Run** button that appears beside the `main()` function.
+3. Verify the program executes (check terminal output in primary window or task output).
+4. Repeat with the **Debug** button if applicable.
+
+### Minimal status bar
+
+1. Look at the bottom of the secondary window.
+2. Verify you see a **status bar** showing:
+   - Current cursor row and column (e.g., "Ln 42, Col 15")
+   - An **Outline Panel toggle** button/icon
+3. Move the cursor in the editor and verify the row/column updates.
+4. Verify the status bar does **NOT** show language, git status, diagnostics, or other primary status bar items.
+
+### Outline Panel toggle
+
+1. Click the **Outline Panel toggle** in the status bar.
+2. Verify an **Outline Panel** appears showing document structure (functions, classes, headings).
+3. Select a different file tab in the secondary window.
+4. Verify the Outline Panel updates to show the structure of the newly selected file.
+5. Click the toggle again to hide the Outline Panel.
+6. Verify the panel disappears.
+
+### Drag tab to different monitor
+
+*Requires a multi-monitor setup*
+
+1. Open a file in the primary window.
+2. Drag the tab header outside the window toward a **different monitor**.
+3. Release the drag on the second monitor.
+4. Verify a new **secondary editor window** opens on that monitor containing the dragged file.
+5. Verify the original tab is removed from the source window (or remains if it was the only copy).
 
 

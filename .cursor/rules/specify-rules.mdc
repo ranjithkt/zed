@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2025-12-25
 
 ## Active Technologies
+- Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`, `crates/outline_panel`, `crates/editor`) (001-multi-window)
+- Local filesystem + existing workspace persistence (SQLite via `sqlez`) where already used (001-multi-window)
 
 - Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`) (001-multi-window)
 
@@ -22,6 +24,7 @@ cargo test; cargo clippy
 Rust 1.92 (`rust-toolchain.toml`): Follow standard conventions
 
 ## Recent Changes
+- 001-multi-window: Added Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`, `crates/outline_panel`, `crates/editor`)
 
 - 001-multi-window: Added Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`)
 
