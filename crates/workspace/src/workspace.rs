@@ -1468,7 +1468,7 @@ impl Workspace {
         let window_id = window_handle.window_id();
         let project_key = ProjectKey::for_project(&project);
         app_state.workspace_store.update(cx, |store, _| {
-            store.workspaces.insert(window_handle.clone());
+            store.workspaces.insert(window_handle);
             store.register_workspace_window(project_key, window_id, role);
         });
 
@@ -1520,15 +1520,26 @@ impl Workspace {
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
-            // Only add dock buttons for primary windows - secondary windows
-            // get a minimal status bar with only cursor position
-            if role == WorkspaceWindowRole::Primary {
-                let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
-                let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
-                let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
-                status_bar.add_left_item(left_dock_buttons, window, cx);
-                status_bar.add_right_item(right_dock_buttons, window, cx);
-                status_bar.add_right_item(bottom_dock_buttons, window, cx);
+            match role {
+                WorkspaceWindowRole::Primary => {
+                    let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
+                    let bottom_dock_buttons =
+                        cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
+                    let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+                    status_bar.add_left_item(left_dock_buttons, window, cx);
+                    status_bar.add_right_item(right_dock_buttons, window, cx);
+                    status_bar.add_right_item(bottom_dock_buttons, window, cx);
+                }
+                WorkspaceWindowRole::SecondaryEditor => {
+                    // Secondary windows only load the OutlinePanel, but its dock side is
+                    // user-configurable (left/right). Render standard dock `PanelButtons`
+                    // for both left and right docks so the correct button appears on the
+                    // correct side with the same show/hide + tooltip behavior as primary.
+                    let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
+                    let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+                    status_bar.add_left_item(left_dock_buttons, window, cx);
+                    status_bar.add_right_item(right_dock_buttons, window, cx);
+                }
             }
             status_bar
         });

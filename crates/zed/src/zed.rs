@@ -96,46 +96,6 @@ use zed_actions::{
     Quit,
 };
 
-/// A simple status bar button to toggle the OutlinePanel in secondary windows.
-struct OutlinePanelToggleButton {
-    workspace: WeakEntity<Workspace>,
-}
-
-impl OutlinePanelToggleButton {
-    fn new(workspace: WeakEntity<Workspace>) -> Self {
-        Self { workspace }
-    }
-}
-
-impl Render for OutlinePanelToggleButton {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self.workspace.clone();
-        IconButton::new("outline-panel-toggle", IconName::ListTree)
-            .icon_size(IconSize::Small)
-            .tooltip(|_window, cx| {
-                ui::Tooltip::for_action("Toggle Outline Panel", &outline_panel::ToggleFocus, cx)
-            })
-            .on_click(move |_, window, cx| {
-                if let Some(workspace) = workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
-                    });
-                }
-            })
-    }
-}
-
-impl workspace::StatusItemView for OutlinePanelToggleButton {
-    fn set_active_pane_item(
-        &mut self,
-        _active_pane_item: Option<&dyn workspace::item::ItemHandle>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        // Outline panel state is managed separately; no per-item state needed
-    }
-}
-
 actions!(
     zed,
     [
@@ -507,12 +467,13 @@ pub fn initialize_workspace(
                 status_bar.add_right_item(image_info, window, cx);
             });
         } else {
-            // Secondary windows get cursor position and outline toggle in the status bar
+            // Secondary windows get cursor position in the status bar.
+            //
+            // Outline panel toggle + dock show/hide comes from the standard dock `PanelButtons`
+            // (created in `Workspace`), which matches primary window behavior and tooltips.
             let cursor_position =
                 cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
-            let outline_toggle = cx.new(|_| OutlinePanelToggleButton::new(workspace.weak_handle()));
             workspace.status_bar().update(cx, |status_bar, cx| {
-                status_bar.add_right_item(outline_toggle, window, cx);
                 status_bar.add_right_item(cursor_position, window, cx);
             });
         }
