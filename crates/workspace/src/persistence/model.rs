@@ -1,7 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    path_list::PathList,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    WorkspaceWindowRole, item::ItemHandle, path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -62,6 +62,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,
+    pub(crate) window_role: WorkspaceWindowRole,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]

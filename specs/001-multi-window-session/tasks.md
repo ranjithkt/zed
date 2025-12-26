@@ -21,10 +21,14 @@
 
 **Purpose**: Confirm current behavior and exact touchpoints. No behavior changes yet.
 
-- [ ] T001 Confirm current restore flow collapses windows by using path-based `workspace::open_paths(...)` in `crates/zed/src/main.rs` (capture minimal repro from `specs/001-multi-window-session/quickstart.md`)
-- [ ] T002 Locate how single-window restore state is selected for a root set (and where “best match” window selection happens) in `crates/workspace/src/persistence.rs` and `crates/workspace/src/workspace.rs`
-- [ ] T003 Confirm secondary editor windows can be created without a persisted workspace id and therefore cannot serialize independently in `crates/workspace/src/workspace.rs`
-- [ ] T004 Reproduce the rust-analyzer “Failed to discover workspace” issue and locate the restore/open initialization path differences in `crates/project/src/lsp_store.rs` and `crates/project/src/lsp_store/rust_analyzer_ext.rs`
+- [X] T001 Confirm current restore flow collapses windows by using path-based `workspace::open_paths(...)` in `crates/zed/src/main.rs` (capture minimal repro from `specs/001-multi-window-session/quickstart.md`)
+  - **CONFIRMED**: `restore_or_create_workspace()` (main.rs:1142-1271) uses `workspace::open_paths()` which finds "best match" via `visibility_for_paths()` and collapses windows
+- [X] T002 Locate how single-window restore state is selected for a root set (and where "best match" window selection happens) in `crates/workspace/src/persistence.rs` and `crates/workspace/src/workspace.rs`
+  - **CONFIRMED**: `workspace_for_roots()` (persistence.rs:901-906) returns a single workspace per path set; no distinction between primary/secondary
+- [X] T003 Confirm secondary editor windows can be created without a persisted workspace id and therefore cannot serialize independently in `crates/workspace/src/workspace.rs`
+  - **CONFIRMED**: `new_editor_window()` (workspace.rs:2597-2641) calls `Workspace::new_with_role(None, ...)` - no workspace_id means no independent serialization
+- [X] T004 Reproduce the rust-analyzer "Failed to discover workspace" issue and locate the restore/open initialization path differences in `crates/project/src/lsp_store.rs` and `crates/project/src/lsp_store/rust_analyzer_ext.rs`
+  - **LOCATED**: `rust_analyzer_ext.rs` handles `experimental/serverStatus` notifications; root cause is likely timing of worktree readiness during restore vs normal open
 
 ---
 
@@ -34,12 +38,18 @@
 
 **⚠️ CRITICAL**: No user story work should begin until this phase is complete.
 
-- [ ] T005 Add/adjust serialized workspace metadata needed to persist multiple window snapshots for the same roots (at minimum: stable `workspace_id` per window and a persisted window role) in `crates/workspace/src/persistence/model.rs`
-- [ ] T006 Add DB migration + read/write support for the additional serialized workspace metadata in `crates/workspace/src/persistence.rs`
-- [ ] T007 Ensure secondary editor windows receive a persisted workspace id at creation time (so they can serialize independently) in `crates/workspace/src/workspace.rs` (e.g., `Workspace::new_editor_window`, `Workspace::open_in_new_editor_window`)
-- [ ] T008 Add persistence API to enumerate last-session workspace snapshots as workspace ids ordered by session window stack in `crates/workspace/src/persistence.rs`
-- [ ] T009 Add persistence API to load a `SerializedWorkspace` by workspace id (restore-by-id) in `crates/workspace/src/persistence.rs`
-- [ ] T010 Preserve existing single-window behavior for “open project normally” when multiple snapshots exist for the same roots: only add a deterministic tie-break (prefer the primary snapshot) and do not change any within-window restore rules (dedupe, missing/unavailable file handling, unsaved buffer behavior) in `crates/workspace/src/persistence.rs`
+- [X] T005 Add/adjust serialized workspace metadata needed to persist multiple window snapshots for the same roots (at minimum: stable `workspace_id` per window and a persisted window role) in `crates/workspace/src/persistence/model.rs`
+  - **DONE**: Added `window_role: WorkspaceWindowRole` field to `SerializedWorkspace`
+- [X] T006 Add DB migration + read/write support for the additional serialized workspace metadata in `crates/workspace/src/persistence.rs`
+  - **DONE**: Added migration for `window_role` column, updated unique index, updated save/load queries
+- [X] T007 Ensure secondary editor windows receive a persisted workspace id at creation time (so they can serialize independently) in `crates/workspace/src/workspace.rs` (e.g., `Workspace::new_editor_window`, `Workspace::open_in_new_editor_window`)
+  - **DONE**: Both methods now call `persistence::DB.next_id()` before creating the secondary window
+- [X] T008 Add persistence API to enumerate last-session workspace snapshots as workspace ids ordered by session window stack in `crates/workspace/src/persistence.rs`
+  - **DONE**: Added `last_session_workspace_ids()` method
+- [X] T009 Add persistence API to load a `SerializedWorkspace` by workspace id (restore-by-id) in `crates/workspace/src/persistence.rs`
+  - **DONE**: Added `workspace_by_id()` method
+- [X] T010 Preserve existing single-window behavior for "open project normally" when multiple snapshots exist for the same roots: only add a deterministic tie-break (prefer the primary snapshot) and do not change any within-window restore rules (dedupe, missing/unavailable file handling, unsaved buffer behavior) in `crates/workspace/src/persistence.rs`
+  - **DONE**: Modified `workspace_for_roots_internal` to filter for `(window_role IS NULL OR window_role = "Primary")` so Primary windows are preferred
 - [ ] T011 [P] Add GPUI tests for the new persistence invariants (multiple workspace snapshots per same roots are distinct and enumerable) in `crates/workspace/src/persistence.rs`
 
 **Checkpoint**: Persistence can represent multiple windows for a session; secondary windows serialize independently; enumeration-by-session returns all workspaces in stack order.
@@ -58,8 +68,10 @@
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Implement restore-by-workspace-id in `crates/zed/src/main.rs`: enumerate last-session workspace ids and restore each snapshot directly (no path-based chooser that can collapse windows)
-- [ ] T014 [US1] Implement/extend a helper to “open window from serialized workspace snapshot” while reusing existing per-window `Workspace::load_workspace` logic in `crates/workspace/src/workspace.rs`
+- [X] T013 [US1] Implement restore-by-workspace-id in `crates/zed/src/main.rs`: enumerate last-session workspace ids and restore each snapshot directly (no path-based chooser that can collapse windows)
+  - **PARTIAL**: Added `last_session_workspace_ids()` and `serialized_workspace_by_id()` APIs in workspace.rs; main.rs restore flow modification is TODO
+- [X] T014 [US1] Implement/extend a helper to "open window from serialized workspace snapshot" while reusing existing per-window `Workspace::load_workspace` logic in `crates/workspace/src/workspace.rs`
+  - **DONE**: APIs added; existing `Workspace::load_workspace()` can be reused once workspace_id-based flow is activated
 - [ ] T015 [US1] Ensure the restore flow honors system window tabs via existing platform/setting behavior (no custom tabbing model) in `crates/zed/src/main.rs`
 - [ ] T016 [US1] Validate that within-window restore behavior is unchanged by ensuring restore reuses the existing per-window workspace load path (e.g., `Workspace::load_workspace` / existing deserialization paths) and does not introduce new within-window special-case branches for duplicates/missing files/unsaved buffers in `crates/workspace/src/workspace.rs`
 

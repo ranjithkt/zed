@@ -39,7 +39,7 @@ use util::{ResultExt, maybe, rel_path::RelPath};
 use uuid::Uuid;
 
 use crate::{
-    WorkspaceId,
+    WorkspaceId, WorkspaceWindowRole,
     path_list::{PathList, SerializedPathList},
     persistence::model::RemoteConnectionKind,
 };
@@ -882,6 +882,12 @@ impl Domain for WorkspaceDb {
             DROP TABLE user_toolchains;
             ALTER TABLE user_toolchains2 RENAME TO user_toolchains;
         ),
+        // Add window_role to support multi-window sessions (Primary vs SecondaryEditor)
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN window_role TEXT DEFAULT "Primary";
+            DROP INDEX IF EXISTS ix_workspaces_location;
+            CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths, window_role);
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -933,6 +939,7 @@ impl WorkspaceDb {
             centered_layout,
             docks,
             window_id,
+            window_role_str,
         ): (
             WorkspaceId,
             String,
@@ -942,6 +949,7 @@ impl WorkspaceDb {
             Option<bool>,
             DockStructure,
             Option<u64>,
+            Option<String>,
         ) = self
             .select_row_bound(sql! {
                 SELECT
@@ -964,11 +972,13 @@ impl WorkspaceDb {
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
-                    window_id
+                    window_id,
+                    window_role
                 FROM workspaces
                 WHERE
                     paths IS ? AND
-                    remote_connection_id IS ?
+                    remote_connection_id IS ? AND
+                    (window_role IS NULL OR window_role = "Primary")
                 LIMIT 1
             })
             .and_then(|mut prepared_statement| {
@@ -994,6 +1004,11 @@ impl WorkspaceDb {
             None
         };
 
+        let window_role = match window_role_str.as_deref() {
+            Some("SecondaryEditor") => WorkspaceWindowRole::SecondaryEditor,
+            _ => WorkspaceWindowRole::Primary,
+        };
+
         Some(SerializedWorkspace {
             id: workspace_id,
             location: match remote_connection_options {
@@ -1013,6 +1028,7 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            window_role,
         })
     }
 
@@ -1213,17 +1229,24 @@ impl WorkspaceDb {
                     }
                 }
 
+                let window_role_str = match workspace.window_role {
+                    WorkspaceWindowRole::Primary => "Primary",
+                    WorkspaceWindowRole::SecondaryEditor => "SecondaryEditor",
+                };
+
                 conn.exec_bound(sql!(
                     DELETE
                     FROM workspaces
                     WHERE
                         workspace_id != ?1 AND
                         paths IS ?2 AND
-                        remote_connection_id IS ?3
+                        remote_connection_id IS ?3 AND
+                        window_role IS ?4
                 ))?((
                     workspace.id,
                     paths.paths.clone(),
                     remote_connection_id,
+                    window_role_str,
                 ))
                 .context("clearing out old locations")?;
 
@@ -1245,9 +1268,10 @@ impl WorkspaceDb {
                         bottom_dock_zoom,
                         session_id,
                         window_id,
+                        window_role,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         paths = ?2,
@@ -1264,6 +1288,7 @@ impl WorkspaceDb {
                         bottom_dock_zoom = ?13,
                         session_id = ?14,
                         window_id = ?15,
+                        window_role = ?16,
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
@@ -1275,6 +1300,7 @@ impl WorkspaceDb {
                     workspace.docks,
                     workspace.session_id,
                     workspace.window_id,
+                    window_role_str,
                 );
 
                 prepared_query(args).context("Updating workspace")?;
@@ -1651,6 +1677,134 @@ impl WorkspaceDb {
             .into_iter()
             .map(|(location, paths, _)| (location, paths))
             .collect::<Vec<_>>())
+    }
+
+    /// Returns workspace IDs for the last session, ordered by window stack (front-to-back).
+    /// Used for multi-window session restore.
+    pub fn last_session_workspace_ids(
+        &self,
+        last_session_id: &str,
+        last_session_window_stack: Option<Vec<WindowId>>,
+    ) -> Result<Vec<WorkspaceId>> {
+        let workspaces: Vec<(WorkspaceId, Option<u64>)> = self
+            .select_bound(sql! {
+                SELECT workspace_id, window_id
+                FROM workspaces
+                WHERE session_id = ?
+            })?(last_session_id.to_owned())?;
+
+        let mut result: Vec<(WorkspaceId, Option<WindowId>)> = workspaces
+            .into_iter()
+            .map(|(id, window_id)| (id, window_id.map(WindowId::from)))
+            .collect();
+
+        if let Some(stack) = last_session_window_stack {
+            result.sort_by_key(|(_, window_id)| {
+                window_id
+                    .and_then(|id| stack.iter().position(|&order_id| order_id == id))
+                    .unwrap_or(usize::MAX)
+            });
+        }
+
+        Ok(result.into_iter().map(|(id, _)| id).collect())
+    }
+
+    /// Loads a full SerializedWorkspace by its workspace_id.
+    /// Used for restore-by-id in multi-window session restore.
+    pub(crate) fn workspace_by_id(&self, workspace_id: WorkspaceId) -> Option<SerializedWorkspace> {
+        let (
+            paths,
+            paths_order,
+            window_bounds,
+            display,
+            centered_layout,
+            docks,
+            window_id,
+            window_role_str,
+            remote_connection_id,
+        ): (
+            String,
+            String,
+            Option<SerializedWindowBounds>,
+            Option<Uuid>,
+            Option<bool>,
+            DockStructure,
+            Option<u64>,
+            Option<String>,
+            Option<u64>,
+        ) = self
+            .select_row_bound(sql! {
+                SELECT
+                    paths,
+                    paths_order,
+                    window_state,
+                    window_x,
+                    window_y,
+                    window_width,
+                    window_height,
+                    display,
+                    centered_layout,
+                    left_dock_visible,
+                    left_dock_active_panel,
+                    left_dock_zoom,
+                    right_dock_visible,
+                    right_dock_active_panel,
+                    right_dock_zoom,
+                    bottom_dock_visible,
+                    bottom_dock_active_panel,
+                    bottom_dock_zoom,
+                    window_id,
+                    window_role,
+                    remote_connection_id
+                FROM workspaces
+                WHERE workspace_id = ?
+                LIMIT 1
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id))
+            .context("No workspace found for id")
+            .warn_on_err()
+            .flatten()?;
+
+        let paths = PathList::deserialize(&SerializedPathList {
+            paths,
+            order: paths_order,
+        });
+
+        let remote_connection_id = remote_connection_id.map(RemoteConnectionId);
+        let remote_connection_options = if let Some(remote_connection_id) = remote_connection_id {
+            self.remote_connection(remote_connection_id)
+                .context("Get remote connection")
+                .log_err()
+        } else {
+            None
+        };
+
+        let window_role = match window_role_str.as_deref() {
+            Some("SecondaryEditor") => WorkspaceWindowRole::SecondaryEditor,
+            _ => WorkspaceWindowRole::Primary,
+        };
+
+        Some(SerializedWorkspace {
+            id: workspace_id,
+            location: match remote_connection_options {
+                Some(options) => SerializedWorkspaceLocation::Remote(options),
+                None => SerializedWorkspaceLocation::Local,
+            },
+            paths,
+            center_group: self
+                .get_center_pane_group(workspace_id)
+                .context("Getting center group")
+                .log_err()?,
+            window_bounds,
+            centered_layout: centered_layout.unwrap_or(false),
+            display,
+            docks,
+            session_id: None,
+            breakpoints: self.breakpoints(workspace_id),
+            window_id,
+            user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            window_role,
+        })
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
@@ -2237,6 +2391,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2358,6 +2513,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2392,6 +2548,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace_without_breakpoint.clone())
@@ -2490,6 +2647,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -2505,6 +2663,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2612,6 +2771,7 @@ mod tests {
             session_id: None,
             window_id: Some(999),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2646,6 +2806,7 @@ mod tests {
             session_id: None,
             window_id: Some(1),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -2661,6 +2822,7 @@ mod tests {
             session_id: None,
             window_id: Some(2),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2703,6 +2865,7 @@ mod tests {
             session_id: None,
             window_id: Some(3),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -2741,6 +2904,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -2756,6 +2920,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -2771,6 +2936,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -2786,6 +2952,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let connection_id = db
@@ -2812,6 +2979,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -2827,6 +2995,7 @@ mod tests {
             session_id: Some("session-id-3".to_owned()),
             window_id: Some(60),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2878,6 +3047,7 @@ mod tests {
             centered_layout: false,
             session_id: None,
             window_id: None,
+            window_role: WorkspaceWindowRole::Primary,
             user_toolchains: Default::default(),
         }
     }
@@ -2914,6 +3084,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         })
         .collect::<Vec<_>>();
 
@@ -3012,6 +3183,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         })
         .collect::<Vec<_>>();
 
@@ -3364,6 +3536,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
         };
 
         // Save the workspace (this creates the record with empty paths)

@@ -2608,6 +2608,12 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |_, cx| {
+            // Generate a workspace_id so the secondary window can serialize independently
+            let workspace_id = persistence::DB
+                .next_id()
+                .await
+                .unwrap_or_else(|_| Default::default());
+
             let window = cx.update(|cx| {
                 let options = (app_state.build_window_options)(None, cx);
                 cx.open_window(options, {
@@ -2616,7 +2622,7 @@ impl Workspace {
                     move |window, cx| {
                         cx.new(|cx| {
                             Workspace::new_with_role(
-                                None,
+                                Some(workspace_id),
                                 project,
                                 app_state,
                                 WorkspaceWindowRole::SecondaryEditor,
@@ -2654,6 +2660,12 @@ impl Workspace {
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |_, cx| {
+            // Generate a workspace_id so the secondary window can serialize independently
+            let workspace_id = persistence::DB
+                .next_id()
+                .await
+                .unwrap_or_else(|_| Default::default());
+
             let window = cx.update(|cx| {
                 let options = (app_state.build_window_options)(None, cx);
                 cx.open_window(options, {
@@ -2663,7 +2675,7 @@ impl Workspace {
                     move |window, cx| {
                         let workspace = cx.new(|cx| {
                             Workspace::new_with_role(
-                                None,
+                                Some(workspace_id),
                                 project,
                                 app_state,
                                 WorkspaceWindowRole::SecondaryEditor,
@@ -6024,6 +6036,7 @@ impl Workspace {
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
+                    window_role: self.role,
                 };
 
                 window.spawn(cx, async move |_| {
@@ -8083,6 +8096,22 @@ pub fn last_session_workspace_locations(
 ) -> Option<Vec<(SerializedWorkspaceLocation, PathList)>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
+}
+
+/// Returns workspace IDs for the last session, ordered by window stack (front-to-back).
+/// Used for multi-window session restore.
+pub fn last_session_workspace_ids(
+    last_session_id: &str,
+    last_session_window_stack: Option<Vec<WindowId>>,
+) -> Option<Vec<WorkspaceId>> {
+    DB.last_session_workspace_ids(last_session_id, last_session_window_stack)
+        .log_err()
+}
+
+/// Loads a SerializedWorkspace by its workspace_id.
+/// Returns None if no workspace found for the given id.
+pub(crate) fn serialized_workspace_by_id(workspace_id: WorkspaceId) -> Option<SerializedWorkspace> {
+    DB.workspace_by_id(workspace_id)
 }
 
 actions!(
