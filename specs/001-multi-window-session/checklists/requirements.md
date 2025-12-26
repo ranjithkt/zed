@@ -1,8 +1,8 @@
 # Specification Quality Checklist: Multi-Window Session Restore
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning  
-**Created**: December 26, 2025  
-**Feature**: [spec.md](../spec.md)
+**Created**: 2025-12-26  
+**Feature**: `specs/001-multi-window-session/spec.md`
 
 ## Content Quality
 
@@ -31,5 +31,6 @@
 
 ## Notes
 
-- All validation items passed
+- This spec intentionally defaults within-window restore behavior (duplicates, missing files, unsaved buffers, remote reconnect UX) to existing single-window behavior. The only deviation is preventing cross-window collapsing/merging during restore.
+- This “do not reinvent the wheel” principle is expected to be followed in implementation: do not add new within-window restore rules or special cases as part of multi-window support.
 

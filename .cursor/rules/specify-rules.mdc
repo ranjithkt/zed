@@ -7,6 +7,8 @@ Auto-generated from all feature plans. Last updated: 2025-12-25
 - Local filesystem + existing workspace persistence (SQLite via `sqlez`) where already used (001-multi-window)
 - Rust 1.92 (see `rust-toolchain.toml`) + `gpui`, `workspace`, `title_bar`, `ui` (002-secondary-window-file-menu)
 - N/A (no new persistence) (002-secondary-window-file-menu)
+- Rust 1.92 (`C:\\Repos\\zed\\rust-toolchain.toml`) + GPUI and existing Zed crates (`workspace`, `project`, `session`, `zed`) (001-multi-window-session)
+- Existing workspace persistence (workspace DB / `workspaces` table + serialized workspace blobs) (001-multi-window-session)
 
 - Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`) (001-multi-window)
 
@@ -26,10 +28,10 @@ cargo test; cargo clippy
 Rust 1.92 (`rust-toolchain.toml`): Follow standard conventions
 
 ## Recent Changes
+- 001-multi-window-session: Added Rust 1.92 (`C:\\Repos\\zed\\rust-toolchain.toml`) + GPUI and existing Zed crates (`workspace`, `project`, `session`, `zed`)
 - 002-secondary-window-file-menu: Added Rust 1.92 (see `rust-toolchain.toml`) + `gpui`, `workspace`, `title_bar`, `ui`
 - 001-multi-window: Added Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`, `crates/outline_panel`, `crates/editor`)
 
-- 001-multi-window: Added Rust 1.92 (`rust-toolchain.toml`) + GPUI (`crates/gpui`), Zed workspace/project abstractions (`crates/workspace`, `crates/project`, `crates/project_panel`)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

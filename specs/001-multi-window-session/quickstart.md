@@ -1,5 +1,7 @@
 # Quickstart: Multi-Window Session Restore
 
+**Guiding principle (do not reinvent the wheel)**: When validating these scenarios, focus on whether windows/tabs restore into the correct windows. All within-window behavior must remain the same as existing single-window restore behavior.
+
 ## Scenario A: Restore tabs into correct windows (P1)
 
 1. Open a project in a **primary** window.
@@ -23,7 +25,7 @@
 
 **Expected**:
 - The app restores using system window tabs (as supported by the platform/setting).
-- No unintended duplicate tabs are created for the same file (same file = (project origin, canonical absolute path)).
+- Within-window behavior (including duplicates, missing files, unsaved buffers) matches what Zed already does for single-window restore.
 
 ## Scenario B: Intentional duplicates across windows
 
@@ -47,7 +49,7 @@
 
 ## Scenario D: rust-analyzer workspace discovery succeeds after restore (P2)
 
-1. Open a Rust project that contains a valid Rust workspace (e.g., a `Cargo.toml` workspace).
+1. Open a Rust project where Rust language features work when opening the project normally.
 2. Open a Rust file so rust-analyzer initializes.
 3. Quit and relaunch.
 

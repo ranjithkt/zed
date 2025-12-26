@@ -34,12 +34,16 @@ is produced by rust-analyzer via `experimental/serverStatus` notifications. The 
 
 1. **Restore uses a chooser intended for “open folder”** instead of restoring by persisted per-window workspace records.
 2. **Persistence does not model “multiple windows for the same roots”** as distinct persisted workspaces with distinct ids and roles.
-3. **rust-analyzer serverStatus messages are unthrottled** and are logged repeatedly.
+3. **Restore/open flows can cause rust-analyzer discovery to fail** even when the same project works when opened normally.
 
 ## Design direction
 
 - Restore last session by enumerating **workspace ids** that were open in the last session (ordered by the saved window stack), then open windows and load each `SerializedWorkspace` directly.
 - Ensure primary and secondary windows have distinct persisted workspace ids so they can serialize independently.
-- Fix rust-analyzer workspace discovery so “Failed to discover workspace” does not occur for valid Rust projects after open/restore.
+- Fix the underlying cause of rust-analyzer workspace discovery failures triggered by restore/open flows, without suppressing status messages.
+
+## Guiding principle (do not reinvent the wheel)
+
+- Multi-window restore must reuse existing single-window restore behavior for all within-window concerns (duplicates, missing files, unsaved buffers, remote reconnect UX). The only intended change is preventing cross-window collapsing/merging by restoring per-window snapshots.
 
 

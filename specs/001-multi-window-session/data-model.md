@@ -4,6 +4,8 @@
 
 This feature requires persisting and restoring **multiple windows** for the same project roots, with each window maintaining its own tab/pane state.
 
+**Guiding principle (do not reinvent the wheel)**: This data model only describes what must exist to restore multiple windows independently. It MUST NOT introduce new semantics for within-window restore behavior (duplicates, missing files, unsaved buffers), which remains whatever Zed already does for single-window restore.
+
 ## Entities
 
 ### Session Window State
@@ -31,7 +33,7 @@ Represents a persisted workspace snapshot for a single window.
 
 Represents an open editor item within a specific serialized workspace’s pane tree.
 
-- **project_path (optional)**: Used to match already-restored items and avoid reopening duplicates in the same window.
+- **project_path (optional)**: Used by existing single-window restore behavior to match already-restored items and avoid reopening duplicates in the same window.
 - **order / active**: Preserves tab ordering and selection within each pane.
 
 ## Relationships

@@ -3,27 +3,15 @@
 **Feature Branch**: `001-multi-window-session`  
 **Created**: December 26, 2025  
 **Status**: Draft  
-**Input**: User description: "The file now opens in the relevant window which was active. But when the window is getting opened, I see a Rust language server error about failing to discover the workspace. Also, when opening, it restores all tabs from the previous session (including secondary windows) into the primary window, causing duplicates. Closing and opening of windows should support multiple windows and retaining editor tabs per window."
+**Input**: User description: "When I close a multi-window session, reopening Zed should restore the same multi-window layout. Everything else (duplicates, missing files, unsaved buffers, remote reconnect UX) should behave exactly like it already does for single-window restore. Only deviate where multi-window requires it."
 
-## Clarifications
-
-### Session 2025-12-26
-
-- Q: Restore as system window tabs vs separate OS windows? → A: Use the platform/user setting (system window tabs when enabled, otherwise separate windows), and do not create unintended duplicate tabs for the same file.
-- Q: What counts as “the same file” for de-duplication? → A: (Project origin, canonical absolute path).
-- Q: What qualifies as a “valid Rust workspace” for the rust-analyzer fix? → A: Any restored/opened project with a `Cargo.toml` in any visible worktree root or descendant.
-- Q: Which project types are in-scope for restore (local vs WSL/SSH/remote)? → A: Local + WSL/SSH/remote-server projects (no mixing origins within a single window).
-- Q: If a remote project can’t reconnect during restore, what should Zed do? → A: Restore the window in a disconnected state and prompt to reconnect; tabs restore once connected.
-- Q: After restore, what workspace-folders scope should rust-analyzer be initialized with? → A: All visible worktree roots for the window.
-- Q: When system window tabs are enabled, what does “window count” mean for restore success? → A: Count restored session window entries/workspaces (even if represented as tabs within one OS window).
-- Q: How should unsaved buffers be restored across multiple windows? → A: Restore unsaved buffers only in their original window (keyed by a persisted buffer id); never duplicate across windows.
-- Q: If a platform window limit prevents restoring all windows, how should Zed report it? → A: Show a non-modal notification/toast in the restored primary window summarizing what could not be restored.
+**Guiding principle (do not reinvent the wheel)**: This feature MUST NOT introduce any new “single-window concerns” (dedupe rules, missing-file behavior, unsaved buffer behavior, remote reconnect UX). It MUST reuse existing single-window behavior, and only add what is necessary to save/restore multiple windows without collapsing them.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Restore Tabs into Correct Windows (Priority: P1)
 
-A user previously worked with multiple windows (a primary window and one or more secondary editor windows), each with its own set of open editor tabs. After restarting Zed, they expect each window to reopen with the same tabs in the same window, without duplicating tabs into the primary window.
+A user previously worked with multiple windows (a primary window and one or more secondary editor windows), each with its own set of open editor tabs. After restarting Zed, they expect Zed to reopen the same multi-window layout (or system window tabs, depending on their platform/setting), with each window’s tabs restored into that same window.
 
 **Why this priority**: This is the core multi-window experience. If session restore collapses secondary-window tabs into the primary window, users lose window organization and must clean up duplicates manually.
 
@@ -52,34 +40,32 @@ A user closes one secondary window (or closes the full app) and expects the next
 
 ---
 
-### User Story 3 - Rust Analyzer Workspace Discovery Works After Restore (Priority: P2)
+### User Story 3 - Rust Language Features Work After Restore (Priority: P2)
 
-A user opens or restores a window in a Rust project and expects Rust language intelligence to initialize normally. They should not see “Failed to discover workspace” for projects where a Rust workspace is present.
+A user opens or restores a window in a Rust project and expects Rust language intelligence to initialize normally (as it does when opening the project without session restore). They should not see “Failed to discover workspace” for projects where Rust language features normally work.
 
 **Why this priority**: This error blocks Rust language features and creates confusion. The correct outcome is to fix the root cause so the error does not occur for valid Rust projects.
 
-**Independent Test**: Can be tested by restoring a Rust project session and verifying rust-analyzer initializes successfully (no “Failed to discover workspace” for valid Rust projects).
+**Independent Test**: Can be tested by restoring a Rust project session and verifying Rust language features initialize successfully (no persistent “Failed to discover workspace” caused by restore for projects that work when opened normally).
 
 **Acceptance Scenarios**:
 
-1. **Given** a user opens or restores a Rust project window that contains a valid Rust workspace, **When** language services initialize, **Then** rust-analyzer successfully discovers the workspace and does not report “Failed to discover workspace”
-2. **Given** a multi-window session restore for a Rust project, **When** the user restarts Zed, **Then** rust-analyzer workspace discovery succeeds in both the primary and secondary windows (where applicable)
+1. **Given** a Rust project where Rust language features work when opening the project normally, **When** the user opens or restores a window for that project, **Then** rust-analyzer successfully discovers the workspace and does not report “Failed to discover workspace” due to restore/open flow
+2. **Given** a multi-window session restore for a Rust project where Rust language features work when opening the project normally, **When** the user restarts Zed, **Then** rust-analyzer workspace discovery succeeds in both the primary and secondary windows (where applicable)
 
 ---
 
 ### Edge Cases
 
-- **Missing files**: If a previously-open file no longer exists, the window still restores and the missing file is shown as unavailable without preventing other tabs from restoring.
-- **Unsaved buffers**: If a previous session included unsaved buffers, the system restores them only in their original window (keyed by a persisted buffer id) when safe to do so; otherwise it restores the window without them. Unsaved buffers MUST NOT be duplicated into other windows.
-- **Many windows**: If a session contains many secondary windows, the system restores them without duplicating tabs into the primary window. If a platform-imposed window limit is hit, restore proceeds with as many windows as allowed and shows a non-modal notification/toast in the restored primary window summarizing what could not be restored.
-- **Corrupt session state**: If session/window state is unreadable, the system opens a single primary window and does not create duplicate tabs.
-- **Remote reconnect failure**: If a remote-backed window cannot reconnect during restore, the window still restores in a disconnected state, prompts the user to reconnect, and restores tabs once connected.
+- **Existing single-window behavior applies per window**: For missing files, unsaved buffers, duplicate handling, and remote reconnect behavior, multi-window restore MUST behave exactly as the current single-window restore behavior, applied independently for each restored window.
+- **Many windows**: If a platform-imposed limit prevents restoring all windows/tabs, restore proceeds with as many as the platform allows using Zed’s existing error/reporting behavior (no new UX invented by this feature).
+- **Corrupt session state**: If session/window state is unreadable, Zed restores as it already does today (at minimum, a usable primary window).
 
 ### Assumptions & Dependencies
 
 - **Assumptions**:
   - Session restore is enabled and the user is reopening the app rather than opening a project “fresh”.
-  - The feature applies to multi-window projects for both local filesystem and remote-backed projects (WSL/SSH/remote server), and should not change the expected behavior of intentionally opening the same file in multiple windows.
+  - The feature applies to multi-window projects for both local filesystem and remote-backed projects (WSL/SSH/remote server), and MUST NOT change any within-window behavior compared to single-window restore.
   - Each window restores within its own project origin (local vs a specific remote connection); windows do not restore a mixed-origin set of tabs.
 - **Dependencies**:
   - Multi-window support already exists (primary + secondary editor windows).
@@ -89,31 +75,24 @@ A user opens or restores a window in a Rust project and expects Rust language in
 
 ### Functional Requirements
 
-- **FR-001**: System MUST restore the previous session’s set of windows (primary plus any secondary editor windows) for a project when the user restarts the app
-- **FR-002**: System MUST restore each window’s open editor tabs into the same window they were previously associated with
-- **FR-003**: System MUST preserve tab order within each restored window
-- **FR-004**: System MUST NOT create unintended duplicate tabs for the same file during restore (including when restoring into system window tabs), except when the file was previously open in multiple windows intentionally (per FR-005). “Same file” is determined by (project origin, canonical absolute path).
-- **FR-005**: System MUST only restore a file in multiple windows if that file was open in multiple windows in the previous session
-- **FR-006**: System MUST persist window and tab state such that a restart restores the most recent state at close time
-- **FR-007**: System MUST restore windows and tabs even if some previously-open files are missing or unavailable
-- **FR-008**: System MUST ensure Rust workspace discovery succeeds for valid Rust projects opened or restored by Zed (no “Failed to discover workspace” for projects where a Rust workspace exists). A “valid Rust workspace” is any restored/opened project with a `Cargo.toml` in any visible worktree root or descendant. rust-analyzer MUST be initialized with workspace folders that include all visible worktree roots for the window.
-- **FR-009**: System MUST NOT suppress rust-analyzer status messages; the intended fix is to prevent the underlying workspace-discovery failure from occurring
-- **FR-010**: System MUST honor the platform/user setting for system window tabs during restore: when enabled, restore additional windows as system tabs; otherwise restore as separate OS windows
-- **FR-011**: System MUST restore windows and tabs for remote-backed projects (WSL/SSH/remote server) after reconnecting to the corresponding remote environment, preserving per-window separation by project origin
-- **FR-012**: If a remote-backed project cannot reconnect during restore, System MUST still restore the window in a disconnected state and prompt the user to reconnect; tabs MUST restore once connected
+- **FR-001**: System MUST restore the previous session’s set of windows (primary plus any secondary editor windows) when the user restarts the app, honoring the user’s platform/setting for system window tabs
+- **FR-002**: System MUST restore each window’s tabs/panes into the same window they were previously associated with (i.e., multi-window restore MUST NOT collapse or merge multiple windows into one)
+- **FR-003**: System MUST persist window/tab state such that a restart restores the most recent state at close time
+- **FR-004**: For all within-window behaviors (duplicate handling, missing/unavailable files, unsaved buffers, remote reconnect UX), System MUST reuse the existing single-window restore behavior without introducing new special cases for multi-window restore
+- **FR-005**: System MUST fix the underlying cause of “Failed to discover workspace” appearing due to open/restore flows in Rust projects where language features normally work, and MUST NOT suppress rust-analyzer status messages as a workaround
+- **FR-006**: System MUST restore remote-backed windows (WSL/SSH/remote server) using the same reconnect behavior and user prompts as existing single-window restore, preserving per-window separation by project origin
 
 ### Key Entities
 
-- **Session Window State**: The persisted representation of which windows existed and what tabs were open in each window at the time the session was saved.
-- **Window Role**: A window’s type (primary or secondary editor window) used to determine how it is restored.
-- **Tab / Editor Item**: An open editor instance in a particular window, including its ordering and active selection.
-- **Language Service Initialization**: The startup process that enables language intelligence for files in a window.
+- **Session Window State**: The persisted representation of which windows existed (including their ordering) in the prior session.
+- **Workspace Snapshot**: A persisted snapshot of one window’s UI/editor state (tabs/panes) that is restored independently.
+- **Project Origin**: The connection context for a window (local filesystem vs a specific remote environment); windows are restored within their origin.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: After restart, the number of restored session window entries/workspaces matches the previous session’s window count in 100% of manual test scenarios (unless constrained by platform limits). When system window tabs are enabled, multiple restored entries may be represented as tabs within a single OS window.
-- **SC-002**: After restart, tabs are restored into their original windows with **0 unintended duplicates** in the primary window across the test matrix
-- **SC-003**: In restored Rust projects that contain a valid Rust workspace, rust-analyzer workspace discovery succeeds (no “Failed to discover workspace”) in 100% of test runs
-- **SC-004**: Users can complete a restart-and-continue workflow (restart → confirm windows/tabs restored → resume editing) without manual cleanup in 95%+ of test runs
+- **SC-001**: After restart, restored windows/tabs match the previous session layout (no unexpected collapse of multiple windows into one) in 100% of manual test scenarios
+- **SC-002**: After restart, users do not need to manually clean up window/tab placement caused specifically by multi-window restore in 95%+ of test runs
+- **SC-003**: In Rust projects where language features work when opening the project normally, restoring the session does not introduce a persistent “Failed to discover workspace” error in 100% of test runs
+- **SC-004**: Users can restart → confirm windows/tabs restored → resume editing without extra steps compared to single-window restore in 95%+ of test runs
