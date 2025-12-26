@@ -1,20 +1,20 @@
 # Implementation Plan: Multi-Window Session Restore
 
 **Branch**: `001-multi-window-session` | **Date**: 2025-12-26 | **Spec**: [spec.md](spec.md)  
-**Goal**: Restore multi-window sessions without duplicating secondary-window tabs into the primary window, and suppress repeated rust-analyzer “failed to discover workspace” status spam on window open.
+**Goal**: Restore multi-window sessions without duplicating secondary-window tabs into the primary window (including system window tabs when enabled), and fix rust-analyzer workspace discovery failures triggered by open/restore flows.
 
 ## Summary
 
 This feature has two coupled problems:
 
 1. **Session restore collapses multi-window state**: On startup/reopen, restore currently opens workspaces using `workspace::open_paths(...)` based on root paths. That path-selection logic is designed to choose a “best” existing window, which can cause multiple session workspaces (especially those sharing the same roots) to restore into the same window, leading to duplicated tabs and lost window separation.
-2. **Repeated rust-analyzer error spam**: rust-analyzer emits repeated `experimental/serverStatus` notifications when workspace discovery fails; we currently log each update verbatim, which spams the terminal/log output during startup and restore.
+2. **rust-analyzer workspace discovery failures**: rust-analyzer reports “Failed to discover workspace” during open/restore. The desired outcome is to fix the underlying cause so workspace discovery succeeds for valid Rust projects.
 
 The plan is to:
 
-- Restore **by persisted workspace records** (per window) rather than “open paths and let the chooser decide”.
+- Restore **by persisted workspace records** (per window, per project origin) rather than “open paths and let the chooser decide”.
 - Ensure **secondary editor windows have their own persistent workspace ids** so their tabs can be saved and restored.
-- Add **status update deduping** for rust-analyzer server-status notifications (log + UI update throttling), and promote a single actionable message.
+- Ensure rust-analyzer workspace discovery succeeds for valid Rust projects after open/restore (no message suppression).
 
 ## Technical Context
 
@@ -43,10 +43,10 @@ The plan is to:
 - Extend persistence to return the *set of workspaces* that were open in the last session as **workspace ids**, ordered by the stored window stack.
 - Add a new restore path that opens windows from these serialized workspaces directly (bounds, docks, panes, tabs), avoiding the global `open_paths` chooser.
 
-### 3) Deduplicate rust-analyzer “serverStatus” spam
+### 3) Fix rust-analyzer workspace discovery on open/restore
 
-- Deduplicate (or rate-limit) repeated identical status messages per `(LanguageServerId, health)` for a time window during startup.
-- Still emit one user-visible notification when workspace discovery fails, with actionable guidance, but avoid repeated log spam.
+- Identify why rust-analyzer cannot discover the workspace in restored/opened projects.
+- Ensure Zed provides rust-analyzer with sufficient workspace root information so discovery succeeds without manual configuration.
 
 ## Files Expected to Change
 
@@ -55,7 +55,7 @@ The plan is to:
 - `crates/workspace/src/persistence.rs` (queries for session restore; workspace role persistence)
 - `crates/workspace/src/persistence/model.rs` (serialized model updates)
 - `crates/session/src/session.rs` (ordering/stack is already persisted; likely no change)
-- `crates/project/src/lsp_store/rust_analyzer_ext.rs` (dedupe serverStatus logging / UI updates)
+- `crates/project/src/lsp_store/rust_analyzer_ext.rs` (diagnostics/telemetry around discovery failures; verify fix)
 
 ## Implementation Phases
 
@@ -85,17 +85,17 @@ Artifacts:
 - Ensure secondary windows get a database id and serialize state.
 - Ensure “open project normally” still selects the appropriate primary workspace state.
 
-### Phase 4: Rust Analyzer status dedupe
+### Phase 4: Rust Analyzer workspace discovery fix
 
-- Deduplicate repeated rust-analyzer server status log messages.
-- Promote a single actionable user-visible message for discovery failures.
+- Fix the underlying cause of rust-analyzer “failed to discover workspace” during open/restore.
+- Validate with manual scenario and (where feasible) tests.
 
 ### Phase 5: Tests + Manual Verification
 
 - Add GPUI tests for:
   - Multi-window persistence: primary+secondary both persist and restore without duplication.
   - Session restore ordering: window stack ordering respected (where possible).
-  - rust-analyzer spam suppression: repeated identical messages are not logged/emitted repeatedly.
+  - rust-analyzer workspace discovery: valid Rust workspaces are discoverable after open/restore (no “Failed to discover workspace”).
 
 Manual verification steps: [quickstart.md](quickstart.md)
 

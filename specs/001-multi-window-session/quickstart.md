@@ -15,6 +15,16 @@
 - File `B` is open in the secondary window.
 - File `B` is **not duplicated** into the primary window.
 
+## Scenario A2: System window tabs enabled (macOS)
+
+1. Enable system window tabs (platform/user setting).
+2. Create a primary window and at least one secondary editor window with different open files.
+3. Quit and relaunch.
+
+**Expected**:
+- The app restores using system window tabs (as supported by the platform/setting).
+- No unintended duplicate tabs are created for the same file (same file = canonical absolute path within the window’s project origin).
+
 ## Scenario B: Intentional duplicates across windows
 
 1. In the primary window, open file `C`.
@@ -35,13 +45,34 @@
 - Only the primary window is restored.
 - Tabs from the closed secondary window are not restored into the primary.
 
-## Scenario D: rust-analyzer discovery failure does not spam logs (P2)
+## Scenario D: rust-analyzer workspace discovery succeeds after restore (P2)
 
-1. Open a Rust file in a project state that triggers rust-analyzer “failed to discover workspace”.
-2. Quit and relaunch.
+1. Open a Rust project that contains a valid Rust workspace (e.g., a `Cargo.toml` workspace).
+2. Open a Rust file so rust-analyzer initializes.
+3. Quit and relaunch.
 
 **Expected**:
-- The error message is not repeated continuously.
-- The user receives a single actionable message for the failure.
+- rust-analyzer successfully discovers the workspace (no “Failed to discover workspace” for this project).
+
+## Scenario E: Remote restore (WSL/SSH/remote server)
+
+1. Open a remote-backed project (WSL/SSH/remote server) and open at least one file.
+2. Open an additional secondary editor window for the same remote project and open a different file.
+3. Quit and relaunch.
+
+**Expected**:
+- The remote windows restore as remote-backed windows (no mixing local+remote in one window).
+- After reconnecting, tabs restore into their original windows without unintended duplicates.
+
+## Scenario F: Remote reconnect failure
+
+1. Ensure a remote-backed project was part of the previous session.
+2. Simulate remote reconnect failure (e.g., network down or host unavailable).
+3. Relaunch Zed.
+
+**Expected**:
+- The remote window still restores in a disconnected state.
+- The UI prompts to reconnect.
+- Once reconnected, tabs restore into that window.
 
 

@@ -8,7 +8,8 @@ Restore multi-window sessions such that each window’s tabs/panes are restored 
 
 - Applies to restoring windows/tabs when reopening the app (restore-on-startup behavior).
 - Applies to primary and secondary editor windows for the same project roots.
-- Includes log/UI suppression for repeated rust-analyzer workspace discovery failures.
+- Applies to local and remote-backed projects (WSL/SSH/remote server), preserving per-window separation by project origin.
+- Includes fixing rust-analyzer workspace discovery failures triggered by open/restore flows (no message suppression).
 
 ## Restore Inputs
 
@@ -29,20 +30,31 @@ Restore multi-window sessions such that each window’s tabs/panes are restored 
    - Load and apply the serialized pane tree + items for that `workspace_id`.
 3. Do not merge items across workspaces.
 
+## System window tabs behavior
+
+- When platform/user settings enable system window tabs, restoring multiple windows may create multiple tabs within a single OS window.
+- Even in this mode, “window separation” rules still apply: tabs/items from a previously-separate window MUST NOT be duplicated into the primary window beyond what existed in the prior session.
+
+## Remote reconnect behavior
+
+- If a remote-backed project cannot reconnect during restore, the window MUST still be restored in a disconnected state and prompt the user to reconnect.
+- Once reconnected, the window MUST restore the tabs/items that belonged to that window.
+
 ## Duplication Rules
 
 - A file/tab MUST be restored into a window **only** if it was present in that window’s serialized workspace.
 - If a file existed in multiple windows intentionally, it MUST be restored in each of those windows.
 - The system MUST NOT create additional duplicates of a file/tab within the primary window unless that duplication existed previously.
+- “Same file” is determined by canonical absolute path within a single project origin (local filesystem vs a specific remote environment).
 
 ## Error Handling
 
 - Missing files: restore proceeds; missing items appear unavailable; other tabs still restore.
 - Corrupt workspace state: skip restoring that window; still restore remaining windows; open at least one primary window if all fail.
 
-## rust-analyzer Status Spam Suppression
+## rust-analyzer Workspace Discovery
 
-- Repeated identical rust-analyzer “workspace discovery failed” status updates MUST be deduplicated so logs are not spammed.
-- If discovery fails, the user receives a single actionable message per project per launch.
+- For valid Rust projects (where a Rust workspace exists), rust-analyzer MUST successfully discover the workspace after open/restore.
+- The system MUST NOT suppress rust-analyzer status messages as a workaround; the intent is to eliminate the failure condition.
 
 

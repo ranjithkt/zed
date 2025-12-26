@@ -22,13 +22,13 @@ In a multi-window world, this assumption breaks: multiple windows can share the 
 
 Secondary windows are created with `Workspace::new_with_role(None, ..., SecondaryEditor, ...)`. Serialization requires `database_id` to be present; without a workspace id, a secondary window cannot serialize its state. To support multi-window restore, secondary windows must have stable workspace ids that can be saved and later restored.
 
-### rust-analyzer status spam
+### rust-analyzer workspace discovery failure
 
 The terminal output you shared:
 
 > Language server rust-analyzer status update: Failed to discover workspace. Consider adding the Cargo.toml of the workspace to linkedProjects...
 
-is produced by rust-analyzer via `experimental/serverStatus` notifications. We currently log every notification message in `crates/project/src/lsp_store/rust_analyzer_ext.rs`, so repeated identical notifications will spam logs during startup/restore.
+is produced by rust-analyzer via `experimental/serverStatus` notifications. The desired behavior is **not** to suppress these messages, but to fix the underlying cause so rust-analyzer can successfully discover the workspace for valid Rust projects.
 
 ## Root causes
 
@@ -40,6 +40,6 @@ is produced by rust-analyzer via `experimental/serverStatus` notifications. We c
 
 - Restore last session by enumerating **workspace ids** that were open in the last session (ordered by the saved window stack), then open windows and load each `SerializedWorkspace` directly.
 - Ensure primary and secondary windows have distinct persisted workspace ids so they can serialize independently.
-- Deduplicate/ratelimit rust-analyzer `serverStatus` log output and surface a single actionable message instead of spamming logs.
+- Fix rust-analyzer workspace discovery so “Failed to discover workspace” does not occur for valid Rust projects after open/restore.
 
 
