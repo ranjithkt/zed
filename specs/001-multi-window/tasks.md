@@ -110,12 +110,14 @@
 
 - [x] T042 [US4] Add conditional rendering for secondary window status bar in `crates/zed/src/zed.rs`
   - Modified `initialize_workspace` to check `workspace.role()` and add only cursor position for secondary windows
+  - Fixed dock buttons in `workspace.rs` to only be added for primary windows (was causing non-functional icons)
 - [x] T043 [US4] Implement cursor row/column display component for secondary status bar
   - Reused existing `CursorPosition` component from `go_to_line` crate
 - [x] T044 [US4] Subscribe to active editor cursor position changes
   - Already handled by existing `CursorPosition` component's `StatusItemView` impl
 - [x] T045 [US4] Update `Workspace::render()` to show minimal status bar for `SecondaryEditor` role in `crates/workspace/src/workspace.rs`
   - Changed `status_bar_visible()` to show status bar for all windows (was primary-only)
+  - Added `TitleBar::new_minimal()` for secondary windows - shows window controls but no File menu
 
 ### Implementation: FR-021 - Outline Panel toggle
 

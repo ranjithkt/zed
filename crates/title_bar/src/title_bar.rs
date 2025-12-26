@@ -43,7 +43,9 @@ use ui::{
     PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, rel_path::RelPath};
-use workspace::{ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt};
+use workspace::{
+    ToggleWorktreeSecurity, Workspace, WorkspaceWindowRole, notifications::NotifyResultExt,
+};
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
@@ -74,7 +76,12 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        // Secondary windows get the full titlebar but without the application menu.
+        let item = if workspace.role() == WorkspaceWindowRole::Primary {
+            cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx))
+        } else {
+            cx.new(|cx| TitleBar::new_without_menu("title-bar", workspace, window, cx))
+        };
         workspace.set_titlebar_item(item.into(), window, cx);
 
         #[cfg(not(target_os = "macos"))]
@@ -140,6 +147,8 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // For minimal mode (secondary windows), the application_menu is already None,
+        // so the titlebar will render identically but without the File menu.
         let title_bar_settings = *TitleBarSettings::get_global(cx);
 
         let show_menus = show_menus(cx);
@@ -256,23 +265,48 @@ impl TitleBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_internal(id, workspace, false, window, cx)
+    }
+
+    /// Create a titlebar without the application menu (for secondary windows).
+    pub fn new_without_menu(
+        id: impl Into<ElementId>,
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_internal(id, workspace, true, window, cx)
+    }
+
+    fn new_internal(
+        id: impl Into<ElementId>,
+        workspace: &Workspace,
+        skip_app_menu: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let project = workspace.project().clone();
         let git_store = project.read(cx).git_store().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
 
+        // For secondary windows, skip the application menu (File menu etc.)
         let platform_style = PlatformStyle::platform();
-        let application_menu = match platform_style {
-            PlatformStyle::Mac => {
-                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
-                    Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
-                } else {
-                    None
+        let application_menu = if skip_app_menu {
+            None
+        } else {
+            match platform_style {
+                PlatformStyle::Mac => {
+                    if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                        Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
+                    } else {
+                        None
+                    }
                 }
-            }
-            PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
+                PlatformStyle::Linux | PlatformStyle::Windows => {
+                    Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
+                }
             }
         };
 

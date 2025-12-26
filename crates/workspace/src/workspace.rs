@@ -1518,14 +1518,18 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
-        let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
-        let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
-        let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
         let status_bar = cx.new(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
-            status_bar.add_left_item(left_dock_buttons, window, cx);
-            status_bar.add_right_item(right_dock_buttons, window, cx);
-            status_bar.add_right_item(bottom_dock_buttons, window, cx);
+            // Only add dock buttons for primary windows - secondary windows
+            // get a minimal status bar with only cursor position
+            if role == WorkspaceWindowRole::Primary {
+                let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
+                let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
+                let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+                status_bar.add_left_item(left_dock_buttons, window, cx);
+                status_bar.add_right_item(right_dock_buttons, window, cx);
+                status_bar.add_right_item(bottom_dock_buttons, window, cx);
+            }
             status_bar
         });
 
