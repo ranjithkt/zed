@@ -96,6 +96,46 @@ use zed_actions::{
     Quit,
 };
 
+/// A simple status bar button to toggle the OutlinePanel in secondary windows.
+struct OutlinePanelToggleButton {
+    workspace: WeakEntity<Workspace>,
+}
+
+impl OutlinePanelToggleButton {
+    fn new(workspace: WeakEntity<Workspace>) -> Self {
+        Self { workspace }
+    }
+}
+
+impl Render for OutlinePanelToggleButton {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self.workspace.clone();
+        IconButton::new("outline-panel-toggle", IconName::ListTree)
+            .icon_size(IconSize::Small)
+            .tooltip(|_window, cx| {
+                ui::Tooltip::for_action("Toggle Outline Panel", &outline_panel::ToggleFocus, cx)
+            })
+            .on_click(move |_, window, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
+                    });
+                }
+            })
+    }
+}
+
+impl workspace::StatusItemView for OutlinePanelToggleButton {
+    fn set_active_pane_item(
+        &mut self,
+        _active_pane_item: Option<&dyn workspace::item::ItemHandle>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // Outline panel state is managed separately; no per-item state needed
+    }
+}
+
 actions!(
     zed,
     [
@@ -467,10 +507,12 @@ pub fn initialize_workspace(
                 status_bar.add_right_item(image_info, window, cx);
             });
         } else {
-            // Secondary windows get only cursor position in the status bar
+            // Secondary windows get cursor position and outline toggle in the status bar
             let cursor_position =
                 cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+            let outline_toggle = cx.new(|_| OutlinePanelToggleButton::new(workspace.weak_handle()));
             workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(outline_toggle, window, cx);
                 status_bar.add_right_item(cursor_position, window, cx);
             });
         }
@@ -486,7 +528,7 @@ pub fn initialize_workspace(
                 .unwrap_or(true)
         });
 
-        initialize_panels(prompt_builder.clone(), window, cx);
+        initialize_panels(prompt_builder.clone(), workspace.role(), window, cx);
         register_actions(app_state.clone(), workspace, window, cx);
 
         workspace.focus_handle(cx).focus(window, cx);
@@ -656,22 +698,13 @@ fn show_software_emulation_warning_if_needed(
 
 fn initialize_panels(
     prompt_builder: Arc<PromptBuilder>,
+    role: WorkspaceWindowRole,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    cx.spawn_in(window, async move |workspace_handle, cx| {
-        let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-        let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
-        let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-        let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
-        let channels_panel =
-            collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
-        let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
-            workspace_handle.clone(),
-            cx.clone(),
-        );
-        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
+    let is_secondary_window = role == WorkspaceWindowRole::SecondaryEditor;
 
+    cx.spawn_in(window, async move |workspace_handle, cx| {
         async fn add_panel_when_ready(
             panel_task: impl Future<Output = anyhow::Result<Entity<impl workspace::Panel>>> + 'static,
             workspace_handle: WeakEntity<Workspace>,
@@ -687,17 +720,36 @@ fn initialize_panels(
             }
         }
 
-        futures::join!(
-            add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
-            add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
-            initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
-        );
+        if is_secondary_window {
+            // Secondary windows only get the OutlinePanel
+            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
+            add_panel_when_ready(outline_panel, workspace_handle, cx.clone()).await;
+        } else {
+            // Primary windows get all panels
+            let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+            let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
+            let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+            let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
+            let channels_panel =
+                collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
+            let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
+                workspace_handle.clone(),
+                cx.clone(),
+            );
+            let debug_panel = DebugPanel::load(workspace_handle.clone(), cx);
+
+            futures::join!(
+                add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(notification_panel, workspace_handle.clone(), cx.clone()),
+                add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
+                initialize_agent_panel(workspace_handle.clone(), prompt_builder, cx.clone()).map(|r| r.log_err()),
+                initialize_agents_panel(workspace_handle, cx.clone()).map(|r| r.log_err())
+            );
+        }
 
         anyhow::Ok(())
     })

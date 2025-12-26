@@ -1988,7 +1988,10 @@ impl Workspace {
     }
 
     fn should_show_docks(&self) -> bool {
-        self.role == WorkspaceWindowRole::Primary
+        // Both primary and secondary windows can show docks.
+        // Secondary windows only have OutlinePanel loaded, so only
+        // the right dock will have content to display.
+        true
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {

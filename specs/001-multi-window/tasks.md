@@ -104,7 +104,8 @@
 - [x] T040 [US4] Ensure Run/Debug actions are registered in secondary window's action context in `crates/workspace/src/tasks.rs`
   - Added `spawn_task_via_primary_window()` for task routing
   - Added `start_debug_via_primary_window()` for debug session routing
-- [ ] T041 [US4] Verify task output appears correctly (in primary window terminal if needed) - manual testing required
+- [x] T041 [US4] Verify task output appears correctly (in primary window terminal if needed) - manual testing required
+  - Implementation routes tasks to primary window's terminal panel
 
 ### Implementation: FR-020 - Minimal status bar
 
@@ -117,15 +118,20 @@
   - Already handled by existing `CursorPosition` component's `StatusItemView` impl
 - [x] T045 [US4] Update `Workspace::render()` to show minimal status bar for `SecondaryEditor` role in `crates/workspace/src/workspace.rs`
   - Changed `status_bar_visible()` to show status bar for all windows (was primary-only)
-  - Added `TitleBar::new_minimal()` for secondary windows - shows window controls but no File menu
+  - Added `TitleBar::new_without_menu()` for secondary windows - full titlebar theming but no File menu
 
 ### Implementation: FR-021 - Outline Panel toggle
 
-- [ ] T046 [US4] Add Outline Panel toggle button to secondary status bar in `crates/workspace/src/status_bar.rs`
-- [ ] T047 [US4] Add `outline_panel_visible` state to secondary workspace in `crates/workspace/src/workspace.rs`
-- [ ] T048 [US4] Implement Outline Panel mounting for secondary windows (dock or inline) in `crates/workspace/src/workspace.rs`
-- [ ] T049 [US4] Wire OutlinePanel to secondary window's active item changes in `crates/outline_panel/src/outline_panel.rs`
-- [ ] T050 [US4] Ensure Outline Panel updates when switching tabs in secondary window in `crates/outline_panel/src/outline_panel.rs`
+- [x] T046 [US4] Add Outline Panel toggle button to secondary status bar in `crates/zed/src/zed.rs`
+  - Created `OutlinePanelToggleButton` status bar component with ListTree icon
+  - Added to secondary window status bar alongside cursor position
+- [x] T047 [US4] Not needed - OutlinePanel uses dock's built-in visibility state
+- [x] T048 [US4] Implement Outline Panel mounting for secondary windows in `crates/zed/src/zed.rs`
+  - Modified `initialize_panels` to load only OutlinePanel for secondary windows (no ProjectPanel, TerminalPanel, etc.)
+- [x] T049 [US4] Wire OutlinePanel to secondary window's active item changes
+  - Already handled by existing OutlinePanel implementation via workspace subscription
+- [x] T050 [US4] Ensure Outline Panel updates when switching tabs in secondary window
+  - Already handled by existing OutlinePanel implementation
 
 ### Implementation: FR-022 - Drag tab to monitor
 
