@@ -32,8 +32,9 @@ For the origin workspace’s project group:
 
 When the user selects a File menu item:
 
-- Dispatch the action into `target_workspace_window`’s `Window` so that it is delivered to the focused element in that window (typically the active editor).
-- Prefer to **activate** the target window before dispatch so that any dialogs (Save As/Open) are attached to the correct window/monitor.
+- Dispatch the action into `target_workspace_window`'s `Window` so that it is delivered to the focused element in that window (typically the active editor).
+- **Dialog attachment**: Any dialogs triggered by the action (Save As, Open, close confirmations) should appear attached to the **origin window** (where the File menu lives), NOT the target editor window. This keeps dialogs near the user's mouse/attention.
+- Do NOT activate the target window before dispatch; let the action execute silently on the target while dialogs remain on the origin.
 
 ## Error Handling
 
@@ -50,6 +51,6 @@ When the user selects a File menu item:
 
 - **FR-001/FR-002/FR-003**: Save/Save As target the focused editor window.
 - **FR-004/FR-005**: New/Open target the active editor window rather than always the primary.
-- **FR-013**: Dialogs appear attached to the target window (by dispatching within it).
+- **FR-013**: Dialogs appear attached to the origin window (where the File menu was clicked), not the target editor window.
 
 

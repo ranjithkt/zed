@@ -11,10 +11,10 @@ Use this guide to manually verify that File menu actions operate on the active e
 ## Scenario A: Save targets secondary when editing there (P1)
 
 1. In the secondary window, create a new unsaved editor tab (e.g., double-click empty tab strip) and type content.
-2. Without clicking inside the primary window’s editor, open **File → Save** from the application menu (in the primary window title bar).
+2. Without clicking inside the primary window's editor, open **File → Save** from the application menu (in the primary window title bar).
 3. Expected:
-   - The save flow targets the secondary window’s active editor tab.
-   - Any prompts/dialogs (e.g., Save As) appear on the secondary window’s monitor.
+   - The save flow targets the secondary window's active editor tab.
+   - Any prompts/dialogs (e.g., Save As for untitled file) appear on the **primary window** (where the menu was clicked), keeping dialogs near the user.
 
 ## Scenario B: Save targets primary when editing there (P1 regression check)
 
@@ -23,12 +23,14 @@ Use this guide to manually verify that File menu actions operate on the active e
 3. Expected:
    - The primary window’s active editor tab is saved.
 
-## Scenario C: Save As dialog attaches to correct window (P1)
+## Scenario C: Save As dialog attaches to origin window (P1)
 
 1. In the secondary window, ensure the active editor is an untitled buffer or a buffer requiring Save As.
-2. Trigger **File → Save As…**.
+2. Trigger **File → Save As…** from the primary window's File menu.
 3. Expected:
-   - The Save As dialog is modal to the secondary window.
+   - The Save As dialog is modal to the **primary window** (where the menu is), not the secondary window.
+   - This keeps the dialog near the user's mouse/attention.
+   - The save operation itself still targets the secondary window's active file.
 
 ## Scenario D: Close Editor targets active editor window (P2)
 

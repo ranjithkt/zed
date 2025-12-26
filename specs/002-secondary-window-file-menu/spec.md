@@ -18,7 +18,7 @@ A user creates or edits a file in the secondary window and wants to save it usin
 **Acceptance Scenarios**:
 
 1. **Given** a user has an unsaved file open in the secondary window and the secondary window has focus, **When** the user clicks File > Save or presses Ctrl+S, **Then** the active file in the secondary window is saved (not a file in the main window)
-2. **Given** a user has multiple unsaved files open across both windows, **When** the user focuses the secondary window and uses File > Save All, **Then** all unsaved files in the secondary window are saved
+2. **Given** a user has multiple unsaved files open across both windows, **When** the user focuses the secondary window and uses File > Save All, **Then** all unsaved files across all project windows are saved (per FR-011)
 3. **Given** a user creates a new file in the secondary window by double-clicking the tab panel, **When** the user types content and clicks File > Save, **Then** a save dialog appears for the secondary window's new file
 
 ---
@@ -73,13 +73,15 @@ A user wants to view file properties, copy paths, or perform other metadata oper
 
 ### Edge Cases
 
-- What happens when a user triggers a File menu action via keyboard shortcut while focus is transitioning between windows?
-- What happens if the user opens the File menu in one window but clicks the menu item after focus has switched to another window?
-- How does the system handle file operations when a secondary window loses focus to a different application (not another Zed window)?
-- What happens when a file is open in both the main and secondary window and the user performs File > Close in one window?
-- How does the system handle recent files list - should it be per-window or global?
-- What happens if the user has no files open in the focused secondary window and uses File menu operations that require an active file?
-- How does File > Save All indicate progress when saving files across multiple windows?
+The following edge cases are documented for awareness. For MVP, the system uses the `active_editor_window` at action dispatch time; edge cases involving rapid focus transitions follow platform behavior.
+
+- **Focus transition during action**: The system dispatches to whichever window is `active_editor_window` at the moment the action is triggered. Rapid focus changes are handled by the platform's event ordering.
+- **Menu opened, focus switched before click**: The action dispatches to the `active_editor_window` at click time, not menu-open time. This matches user expectation ("I'm working in this window now").
+- **Focus lost to external app**: When focus returns to Zed, `active_editor_window` is updated on pane focus; File menu actions target the correct window.
+- **File open in both windows**: Each window's tab is independent. File > Close closes only the tab in the receiving workspace.
+- **Recent files list**: Remains global per project (existing behavior preserved).
+- **No files open in focused window**: Actions like Save gracefully handle empty state (no-op or appropriate prompt).
+- **Save All progress**: Uses existing save infrastructure; no new progress UI for MVP.
 
 ## Requirements *(mandatory)*
 
@@ -97,7 +99,7 @@ A user wants to view file properties, copy paths, or perform other metadata oper
 - **FR-010**: System MUST reveal the active file from the focused window when File > Reveal in Explorer is invoked
 - **FR-011**: System MUST handle File > Save All by saving all unsaved files across all open windows (both main and secondary windows)
 - **FR-012**: System MUST maintain proper keyboard shortcut behavior so shortcuts always target the focused window
-- **FR-013**: System MUST show file operation dialogs (save, open, close confirmation) as modals attached to the appropriate window
+- **FR-013**: System MUST show file operation dialogs (save, open, close confirmation) as modals attached to the window where the action was invoked (e.g., the primary window if triggered from its File menu), even if the action targets a file in a different window
 - **FR-014**: System MUST maintain existing File menu behavior for the main window when it has focus
 - **FR-015**: System MUST preserve all existing File menu functionality while adding window-awareness
 
@@ -115,5 +117,5 @@ A user wants to view file properties, copy paths, or perform other metadata oper
 - **SC-002**: Users can create and open files in secondary windows with File menu actions routing to the focused window in 100% of test cases
 - **SC-003**: All File menu operations (save, open, close, properties) correctly target the focused window without requiring additional user configuration
 - **SC-004**: Users can manage files independently across multiple windows without operations from one window affecting files in another window
-- **SC-005**: File operation dialogs (save, open, close confirmations) appear attached to the correct window for 100% of operations
+- **SC-005**: File operation dialogs (save, open, close confirmations) appear attached to the origin window (where the action was invoked) for 100% of operations, keeping dialogs near the user
 - **SC-006**: Zero regression in existing main window File menu behavior when main window has focus
