@@ -39,7 +39,6 @@
 - [ ] T007 Ensure secondary editor windows receive a persisted workspace id at creation time (so they can serialize independently) in `crates/workspace/src/workspace.rs` (e.g., `Workspace::new_editor_window`, `Workspace::open_in_new_editor_window`)
 - [ ] T008 Add persistence API to enumerate last-session workspace snapshots as workspace ids ordered by session window stack in `crates/workspace/src/persistence.rs`
 - [ ] T009 Add persistence API to load a `SerializedWorkspace` by workspace id (restore-by-id) in `crates/workspace/src/persistence.rs`
-- [ ] T010 Preserve existing single-window behavior for “open project normally” when multiple snapshots exist for the same roots (prefer the primary snapshot; do not change dedupe/missing-file/unsaved-buffer rules) in `crates/workspace/src/persistence.rs`
 - [ ] T010 Preserve existing single-window behavior for “open project normally” when multiple snapshots exist for the same roots: only add a deterministic tie-break (prefer the primary snapshot) and do not change any within-window restore rules (dedupe, missing/unavailable file handling, unsaved buffer behavior) in `crates/workspace/src/persistence.rs`
 - [ ] T011 [P] Add GPUI tests for the new persistence invariants (multiple workspace snapshots per same roots are distinct and enumerable) in `crates/workspace/src/persistence.rs`
 
@@ -62,7 +61,6 @@
 - [ ] T013 [US1] Implement restore-by-workspace-id in `crates/zed/src/main.rs`: enumerate last-session workspace ids and restore each snapshot directly (no path-based chooser that can collapse windows)
 - [ ] T014 [US1] Implement/extend a helper to “open window from serialized workspace snapshot” while reusing existing per-window `Workspace::load_workspace` logic in `crates/workspace/src/workspace.rs`
 - [ ] T015 [US1] Ensure the restore flow honors system window tabs via existing platform/setting behavior (no custom tabbing model) in `crates/zed/src/main.rs`
-- [ ] T016 [US1] Validate that within-window restore behavior is unchanged by ensuring restore uses the same code path as single-window restore for loading items/tabs in `crates/workspace/src/workspace.rs`
 - [ ] T016 [US1] Validate that within-window restore behavior is unchanged by ensuring restore reuses the existing per-window workspace load path (e.g., `Workspace::load_workspace` / existing deserialization paths) and does not introduce new within-window special-case branches for duplicates/missing files/unsaved buffers in `crates/workspace/src/workspace.rs`
 
 **Checkpoint**: Multi-window restore no longer collapses windows into one; single-window behavior remains unchanged within each window.
@@ -111,7 +109,7 @@
 
 **Purpose**: Validation and repo quality gates.
 
-- [ ] T023 Run `specs/001-multi-window-session/quickstart.md` Scenarios A–F manually and record outcomes
+- [ ] T023 Run `specs/001-multi-window-session/quickstart.md` Scenarios A–F manually (explicitly include A2 system window tabs and E/F remote restore/reconnect failure) and record outcomes
 - [ ] T024 [P] Run `cargo test -p workspace -p project -p zed` and fix any failures related to this feature
 - [ ] T025 [P] Run `./script/clippy.ps1` and fix any new warnings in modified files
 - [ ] T026 Ensure no new `unwrap()` / `expect()` were introduced in non-test code paths touched by this feature
