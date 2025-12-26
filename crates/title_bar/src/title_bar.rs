@@ -293,19 +293,34 @@ impl TitleBar {
 
         // For secondary windows, skip the application menu (File menu etc.)
         let platform_style = PlatformStyle::platform();
+        let workspace_store = workspace.app_state().workspace_store.clone();
         let application_menu = if skip_app_menu {
             None
         } else {
             match platform_style {
                 PlatformStyle::Mac => {
                     if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
-                        Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
+                        Some(cx.new(|cx| {
+                            ApplicationMenu::new(
+                                workspace_store.clone(),
+                                project.clone(),
+                                window,
+                                cx,
+                            )
+                        }))
                     } else {
                         None
                     }
                 }
                 PlatformStyle::Linux | PlatformStyle::Windows => {
-                    Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
+                    Some(cx.new(|cx| {
+                        ApplicationMenu::new(
+                            workspace_store.clone(),
+                            project.clone(),
+                            window,
+                            cx,
+                        )
+                    }))
                 }
             }
         };

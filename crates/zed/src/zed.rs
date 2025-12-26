@@ -867,6 +867,7 @@ fn register_actions(
         })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
+            let fs = workspace.app_state().fs.clone();
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
                     files: true,
@@ -876,7 +877,7 @@ fn register_actions(
                 },
                 DirectoryLister::Local(
                     workspace.project().clone(),
-                    workspace.app_state().fs.clone(),
+                    fs.clone(),
                 ),
                 window,
                 cx,
@@ -887,13 +888,41 @@ fn register_actions(
                     return;
                 };
 
-                if let Some(task) = this
-                    .update_in(cx, |this, window, cx| {
-                        this.open_workspace_for_paths(false, paths, window, cx)
+                // Separate files from directories
+                let mut files = Vec::new();
+                let mut directories = Vec::new();
+                for path in paths {
+                    match fs.metadata(&path).await {
+                        Ok(Some(meta)) if meta.is_dir => directories.push(path),
+                        _ => files.push(path),
+                    }
+                }
+
+                // Open files directly in the current workspace
+                if !files.is_empty() {
+                    this.update_in(cx, |workspace, window, cx| {
+                        workspace.open_paths(
+                            files,
+                            workspace::OpenOptions::default(),
+                            None,
+                            window,
+                            cx,
+                        )
                     })
-                    .log_err()
-                {
-                    task.await.log_err();
+                    .ok();
+                }
+
+                // For directories, use the existing workspace_for_paths logic
+                // which may add them as worktrees
+                if !directories.is_empty() {
+                    if let Some(task) = this
+                        .update_in(cx, |this, window, cx| {
+                            this.open_workspace_for_paths(false, directories, window, cx)
+                        })
+                        .log_err()
+                    {
+                        task.await.log_err();
+                    }
                 }
             })
             .detach()

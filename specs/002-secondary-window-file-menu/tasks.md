@@ -23,7 +23,7 @@
 
 **Purpose**: No new project structure needed; this feature modifies existing code only.
 
-- [ ] T001 Review existing `WorkspaceStore::active_editor_window_for_project` API in `crates/workspace/src/workspace.rs` to confirm it tracks pane focus across windows
+- [x] T001 Review existing `WorkspaceStore::active_editor_window_for_project` API in `crates/workspace/src/workspace.rs` to confirm it tracks pane focus across windows
 
 ---
 
@@ -35,10 +35,10 @@
 
 ### Implementation
 
-- [ ] T002 Add helper method `resolve_file_menu_target_window` to `ApplicationMenu` in `crates/title_bar/src/application_menu.rs` that computes the target workspace window for File menu dispatch using `WorkspaceStore::active_editor_window_for_project`
-- [ ] T003 Modify `build_menu_from_items` in `crates/title_bar/src/application_menu.rs` to use target window dispatch for File menu entries (check `entry.menu.name == "File"`)
-- [ ] T004 Add fallback logic: if `active_editor_window` is missing or stale, fall back to dispatching in the primary (current) window as per contract
-- [ ] T005 Ensure errors resolving target workspace are logged (not panicked or silently ignored) per constitution
+- [x] T002 Add helper method `resolve_file_menu_target_window` to `ApplicationMenu` in `crates/title_bar/src/application_menu.rs` that computes the target workspace window for File menu dispatch using `WorkspaceStore::active_editor_window_for_project`
+- [x] T003 Modify `build_menu_from_items` in `crates/title_bar/src/application_menu.rs` to use target window dispatch for File menu entries (check `entry.menu.name == "File"`)
+- [x] T004 Add fallback logic: if `active_editor_window` is missing or stale, fall back to dispatching in the primary (current) window as per contract
+- [x] T005 Ensure errors resolving target workspace are logged (not panicked or silently ignored) per constitution
 
 **Checkpoint**: File menu actions now dispatch to the correct editor window. Manual verification: focus secondary window editor, click File > Save from primary menu, observe action targets secondary.
 
@@ -58,10 +58,10 @@
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] Verify `workspace::Save` action handler in `crates/workspace/src/workspace.rs` uses its own window context (already correct; confirm no hardcoded primary assumption)
-- [ ] T009 [US1] Verify `workspace::SaveAs` action handler shows dialog on the **origin window** (where File menu was clicked), not the target editor window; this keeps dialogs near the user's mouse/attention per FR-013
-- [ ] T010 [US1] Verify `workspace::SaveAll` handler in `crates/workspace/src/workspace.rs`; per spec FR-011 it should save across all project windows (may need iteration over window group)
-- [ ] T011 [US1] If `SaveAll` only saves current workspace, update it to iterate `WorkspaceStore::secondary_windows_for_project` and save in each, plus primary
+- [x] T008 [US1] Verify `workspace::Save` action handler in `crates/workspace/src/workspace.rs` uses its own window context (already correct; confirm no hardcoded primary assumption)
+- [ ] T009 [US1] Verify `workspace::SaveAs` action handler shows dialog on the **origin window** (where File menu was clicked), not the target editor window; this keeps dialogs near the user's mouse/attention per FR-013 -- NOTE: Current architecture dispatches to target window; dialog appears there. Fixing requires architectural changes.
+- [x] T010 [US1] Verify `workspace::SaveAll` handler in `crates/workspace/src/workspace.rs`; per spec FR-011 it should save across all project windows (may need iteration over window group)
+- [x] T011 [US1] If `SaveAll` only saves current workspace, update it to iterate `WorkspaceStore::secondary_windows_for_project` and save in each, plus primary
 
 **Checkpoint**: User Story 1 complete. Manual test per `quickstart.md` Scenario A/B/C/E.
 
@@ -79,10 +79,10 @@
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Audit `workspace::NewFile` handler registration in `crates/zed/src/zed.rs` (`initialize_workspace`); currently calls `open_new()` which creates a new window—change to open in current workspace when invoked via File menu dispatch
-- [ ] T014 [US2] Refactor `NewFile` handler: when action is dispatched into a workspace, use `Editor::new_file(workspace, ...)` on that workspace instead of `open_new(...)`
-- [ ] T015 [US2] Verify `workspace::Open` / `workspace::OpenFiles` handlers in `crates/workspace/src/workspace.rs` respect the window they're dispatched into (confirm file picker + open happen in target window)
-- [ ] T016 [US2] Verify `Reopen Last Closed` (`workspace::ReopenClosedItem`) uses the receiving workspace's closed-item history, not a global or primary-only history
+- [x] T013 [US2] Audit `workspace::NewFile` handler registration in `crates/zed/src/zed.rs` (`initialize_workspace`); currently calls `open_new()` which creates a new window—change to open in current workspace when invoked via File menu dispatch -- NOTE: Workspace-level `Editor::new_file` handler (registered via `workspace.register_action`) takes precedence when action is dispatched to workspace
+- [x] T014 [US2] Refactor `NewFile` handler: when action is dispatched into a workspace, use `Editor::new_file(workspace, ...)` on that workspace instead of `open_new(...)` -- NOTE: Already implemented; workspace.register_action(Editor::new_file) handles this
+- [x] T015 [US2] Verify `workspace::Open` / `workspace::OpenFiles` handlers in `crates/workspace/src/workspace.rs` respect the window they're dispatched into (confirm file picker + open happen in target window) -- FIX: Modified handler in zed.rs to use Workspace::open_paths for files (opens in current workspace)
+- [x] T016 [US2] Verify `Reopen Last Closed` (`workspace::ReopenClosedItem`) uses the receiving workspace's closed-item history, not a global or primary-only history
 
 **Checkpoint**: User Story 2 complete. Manual test: focus secondary, File > New opens there; File > Open opens selected file in secondary.
 
@@ -100,10 +100,10 @@
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] Verify `workspace::CloseActiveItem` handler (File > Close Editor) in `crates/workspace/src/workspace.rs` operates on its own workspace (should already be correct as it's workspace-scoped)
-- [ ] T018a [US3] Verify `workspace::CloseAllItems` handler (File > Close All) in `crates/workspace/src/workspace.rs` closes only items in the receiving workspace, not all windows
-- [ ] T019 [US3] Verify `workspace::CloseWindow` targets the receiving workspace's window (should be correct; confirm)
-- [ ] T020 [US3] Confirm unsaved-changes prompt dialog appears attached to the **origin window** (where File menu was clicked), not the target editor window, when closing with unsaved changes
+- [x] T018 [US3] Verify `workspace::CloseActiveItem` handler (File > Close Editor) in `crates/workspace/src/workspace.rs` operates on its own workspace (should already be correct as it's workspace-scoped) -- NOTE: Defined in pane.rs, operates on self (the pane receiving the action)
+- [x] T018a [US3] Verify `workspace::CloseAllItems` handler (File > Close All) in `crates/workspace/src/workspace.rs` closes only items in the receiving workspace, not all windows -- NOTE: CloseAllItemsAndPanes is workspace-scoped
+- [x] T019 [US3] Verify `workspace::CloseWindow` targets the receiving workspace's window (should be correct; confirm) -- NOTE: Workspace::close_window operates on self.role
+- [ ] T020 [US3] Confirm unsaved-changes prompt dialog appears attached to the **origin window** (where File menu was clicked), not the target editor window, when closing with unsaved changes -- NOTE: Same architectural limitation as T009; dialogs appear on target window
 
 **Checkpoint**: User Story 3 complete. Manual test per `quickstart.md` Scenario D.
 
@@ -121,9 +121,9 @@
 
 ### Implementation for User Story 4
 
-- [ ] T022 [US4] Verify Copy Path action in `crates/editor/src/editor.rs` (search for `CopyPath` action handler) uses the receiving workspace's active item path
-- [ ] T023 [US4] Verify Reveal in Explorer action in `crates/editor/src/editor.rs` or `crates/workspace/src/workspace.rs` (search for `RevealInFileManager` or similar) uses the receiving workspace's active item path
-- [ ] T024 [US4] Audit remaining File menu metadata actions defined in `crates/zed/src/zed/app_menus.rs` for correct window targeting
+- [x] T022 [US4] Verify Copy Path action in `crates/editor/src/editor.rs` (search for `CopyPath` action handler) uses the receiving workspace's active item path -- NOTE: Editor::copy_path uses self.target_file_abs_path, scoped to receiving editor
+- [x] T023 [US4] Verify Reveal in Explorer action in `crates/editor/src/editor.rs` or `crates/workspace/src/workspace.rs` (search for `RevealInFileManager` or similar) uses the receiving workspace's active item path -- NOTE: Editor::reveal_in_finder uses self.target_file, scoped to receiving editor
+- [x] T024 [US4] Audit remaining File menu metadata actions defined in `crates/zed/src/zed/app_menus.rs` for correct window targeting -- NOTE: All audited actions are element-scoped (pane, editor, or workspace)
 
 **Checkpoint**: User Story 4 complete. All File menu metadata operations respect active editor window.
 
@@ -133,11 +133,11 @@
 
 **Purpose**: Final verification and cleanup.
 
-- [ ] T025 Run `quickstart.md` full manual verification across Windows, macOS (with cross-platform menu), and Linux
-- [ ] T026 [P] Run `./script/clippy` and fix any new warnings in modified files
-- [ ] T027 [P] Ensure no `unwrap()` / `expect()` in non-test code paths per constitution
-- [ ] T028 Review error handling: verify fallback to primary window logs a warning when active editor window lookup fails
-- [ ] T029 Update `quickstart.md` if any scenarios need adjustment based on implementation
+- [ ] T025 Run `quickstart.md` full manual verification across Windows, macOS (with cross-platform menu), and Linux -- NOTE: Ready for manual testing
+- [x] T026 [P] Run `./script/clippy` and fix any new warnings in modified files -- NOTE: Pre-existing gpui clippy error; no new warnings from changes
+- [x] T027 [P] Ensure no `unwrap()` / `expect()` in non-test code paths per constitution -- NOTE: Verified; no unwrap() in new code
+- [x] T028 Review error handling: verify fallback to primary window logs a warning when active editor window lookup fails -- NOTE: log::warn! added in add_file_menu_action
+- [ ] T029 Update `quickstart.md` if any scenarios need adjustment based on implementation -- NOTE: Dialog placement differs from spec (dialogs appear on target window, not origin)
 
 ---
 

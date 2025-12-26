@@ -1,4 +1,7 @@
-use gpui::{Action, Entity, OwnedMenu, OwnedMenuItem, actions};
+use std::rc::Rc;
+
+use gpui::{Action, Entity, OwnedMenu, OwnedMenuItem, WindowHandle, actions};
+use project::Project;
 use settings::Settings;
 
 use schemars::JsonSchema;
@@ -6,6 +9,7 @@ use serde::Deserialize;
 
 use smallvec::SmallVec;
 use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use workspace::{ProjectKey, Workspace, WorkspaceStore};
 
 use crate::title_bar_settings::TitleBarSettings;
 
@@ -45,10 +49,17 @@ struct MenuEntry {
 pub struct ApplicationMenu {
     entries: SmallVec<[MenuEntry; 8]>,
     pending_menu_open: Option<String>,
+    workspace_store: Entity<WorkspaceStore>,
+    project: Entity<Project>,
 }
 
 impl ApplicationMenu {
-    pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace_store: Entity<WorkspaceStore>,
+        project: Entity<Project>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
         Self {
             entries: menus
@@ -59,7 +70,20 @@ impl ApplicationMenu {
                 })
                 .collect(),
             pending_menu_open: None,
+            workspace_store,
+            project,
         }
+    }
+
+    fn create_target_window_resolver(&self, _cx: &App) -> Rc<dyn Fn(&App) -> Option<WindowHandle<Workspace>>> {
+        let workspace_store = self.workspace_store.clone();
+        let project = self.project.clone();
+        Rc::new(move |cx| {
+            let project_key = ProjectKey::for_project(&project);
+            let store = workspace_store.read(cx);
+            let window_id = store.active_editor_window_for_project(project_key)?;
+            store.workspace_window_for_id(window_id)
+        })
     }
 
     fn sanitize_menu_items(items: Vec<OwnedMenuItem>) -> Vec<OwnedMenuItem> {
@@ -98,9 +122,11 @@ impl ApplicationMenu {
 
     fn build_menu_from_items(
         entry: MenuEntry,
+        target_window_resolver: Rc<dyn Fn(&App) -> Option<WindowHandle<Workspace>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
+        let is_file_menu = entry.menu.name == "File";
         ContextMenu::build(window, cx, |menu, window, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
             let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
@@ -115,7 +141,13 @@ impl ApplicationMenu {
                         action,
                         checked,
                         ..
-                    } => menu.action_checked(name, action, checked),
+                    } => {
+                        if is_file_menu {
+                            Self::add_file_menu_action(menu, name.into(), action, checked, target_window_resolver.clone())
+                        } else {
+                            menu.action_checked(name, action, checked)
+                        }
+                    }
                     OwnedMenuItem::Submenu(submenu) => {
                         submenu
                             .items
@@ -127,7 +159,13 @@ impl ApplicationMenu {
                                     action,
                                     checked,
                                     ..
-                                } => menu.action_checked(name, action, checked),
+                                } => {
+                                    if is_file_menu {
+                                        Self::add_file_menu_action(menu, name.into(), action, checked, target_window_resolver.clone())
+                                    } else {
+                                        menu.action_checked(name, action, checked)
+                                    }
+                                }
                                 OwnedMenuItem::Submenu(_) => menu,
                                 OwnedMenuItem::SystemMenu(_) => {
                                     // A system menu doesn't make sense in this context, so ignore it
@@ -143,11 +181,44 @@ impl ApplicationMenu {
         })
     }
 
-    fn render_application_menu(&self, entry: &MenuEntry) -> impl IntoElement {
+    fn add_file_menu_action(
+        menu: ContextMenu,
+        name: SharedString,
+        action: Box<dyn Action>,
+        checked: bool,
+        target_window_resolver: Rc<dyn Fn(&App) -> Option<WindowHandle<Workspace>>>,
+    ) -> ContextMenu {
+        let action_for_handler = action.boxed_clone();
+        menu.toggleable_entry(
+            name,
+            checked,
+            IconPosition::Start,
+            Some(action),
+            move |window, cx| {
+                if let Some(target_window) = target_window_resolver(cx) {
+                    let action = action_for_handler.boxed_clone();
+                    if let Err(error) = target_window.update(cx, |_, target_window, cx| {
+                        target_window.dispatch_action(action, cx);
+                    }) {
+                        log::warn!(
+                            "Failed to dispatch File menu action to target window: {}",
+                            error
+                        );
+                        window.dispatch_action(action_for_handler.boxed_clone(), cx);
+                    }
+                } else {
+                    window.dispatch_action(action_for_handler.boxed_clone(), cx);
+                }
+            },
+        )
+    }
+
+    fn render_application_menu(&self, entry: &MenuEntry, cx: &App) -> impl IntoElement {
         let handle = entry.handle.clone();
 
         let menu_name = entry.menu.name.clone();
         let entry = entry.clone();
+        let target_window_resolver = self.create_target_window_resolver(cx);
 
         // Application menu must have same ids as first menu item in standard menu
         div()
@@ -156,7 +227,7 @@ impl ApplicationMenu {
             .child(
                 PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
-                        Self::build_menu_from_items(entry.clone(), window, cx).into()
+                        Self::build_menu_from_items(entry.clone(), target_window_resolver.clone(), window, cx).into()
                     })
                     .trigger_with_tooltip(
                         IconButton::new(
@@ -171,11 +242,12 @@ impl ApplicationMenu {
             )
     }
 
-    fn render_standard_menu(&self, entry: &MenuEntry) -> impl IntoElement {
+    fn render_standard_menu(&self, entry: &MenuEntry, cx: &App) -> impl IntoElement {
         let current_handle = entry.handle.clone();
 
         let menu_name = entry.menu.name.clone();
         let entry = entry.clone();
+        let target_window_resolver = self.create_target_window_resolver(cx);
 
         let all_handles: Vec<_> = self
             .entries
@@ -189,7 +261,7 @@ impl ApplicationMenu {
             .child(
                 PopoverMenu::new(format!("{}-menu-popover", menu_name))
                     .menu(move |window, cx| {
-                        Self::build_menu_from_items(entry.clone(), window, cx).into()
+                        Self::build_menu_from_items(entry.clone(), target_window_resolver.clone(), window, cx).into()
                     })
                     .trigger(
                         Button::new(
@@ -311,13 +383,13 @@ impl Render for ApplicationMenu {
             .flex_row()
             .gap_x_1()
             .when(!all_menus_shown && !self.entries.is_empty(), |this| {
-                this.child(self.render_application_menu(&self.entries[0]))
+                this.child(self.render_application_menu(&self.entries[0], cx))
             })
             .when(all_menus_shown, |this| {
                 this.children(
                     self.entries
                         .iter()
-                        .map(|entry| self.render_standard_menu(entry)),
+                        .map(|entry| self.render_standard_menu(entry, cx)),
                 )
             })
     }

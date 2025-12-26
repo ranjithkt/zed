@@ -2823,11 +2823,45 @@ impl Workspace {
     }
 
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_all_internal(
-            action.save_intent.unwrap_or(SaveIntent::SaveAll),
-            window,
-            cx,
-        )
+        let save_intent = action.save_intent.unwrap_or(SaveIntent::SaveAll);
+
+        // Collect all workspaces in this project's window group to save across all windows (FR-011)
+        let project_key = ProjectKey::for_project(&self.project);
+        let workspace_store = self.app_state.workspace_store.clone();
+        let all_workspace_windows: Vec<WindowHandle<Workspace>> =
+            workspace_store.read_with(cx, |store, _| {
+                let mut windows = Vec::new();
+                if let Some(primary_id) = store.primary_window_for_project(project_key) {
+                    if let Some(handle) = store.workspace_window_for_id(primary_id) {
+                        windows.push(handle);
+                    }
+                }
+                for secondary_id in store.secondary_windows_for_project(project_key) {
+                    if let Some(handle) = store.workspace_window_for_id(secondary_id) {
+                        windows.push(handle);
+                    }
+                }
+                windows
+            });
+
+        // Save in each workspace
+        let tasks: Vec<Task<Result<bool>>> = all_workspace_windows
+            .into_iter()
+            .filter_map(|workspace_window| {
+                workspace_window
+                    .update(cx, |workspace, window, cx| {
+                        workspace.save_all_internal(save_intent, window, cx)
+                    })
+                    .ok()
+            })
+            .collect();
+
+        cx.spawn_in(window, async move |_, _| {
+            for task in tasks {
+                task.await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
         .detach_and_log_err(cx);
     }
 
@@ -3215,6 +3249,49 @@ impl Workspace {
                     result.log_err();
                 }
             }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn open_files(&mut self, _: &OpenFiles, window: &mut Window, cx: &mut Context<Self>) {
+        let directories = cx.can_select_mixed_files_and_dirs();
+        let paths = self.prompt_for_open_path(
+            PathPromptOptions {
+                files: true,
+                directories,
+                multiple: true,
+                prompt: None,
+            },
+            DirectoryLister::Local(self.project.clone(), self.app_state.fs.clone()),
+            window,
+            cx,
+        );
+
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(paths) = paths.await.log_err().flatten() else {
+                return anyhow::Ok(());
+            };
+
+            let results = this
+                .update_in(cx, |this, window, cx| {
+                    this.open_paths(
+                        paths,
+                        OpenOptions {
+                            visible: Some(OpenVisible::All),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
+                })?
+                .await;
+
+            for result in results.into_iter().flatten() {
+                result.log_err();
+            }
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -6198,6 +6275,7 @@ impl Workspace {
             .on_action(cx.listener(Self::save_all))
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
+            .on_action(cx.listener(Self::open_files))
             .on_action(cx.listener(Self::follow_next_collaborator))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::new_editor_window))
@@ -9470,7 +9548,7 @@ mod tests {
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -9550,16 +9628,16 @@ mod tests {
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
         let app_state = cx.update({
-            let project = project.clone();
+            let project = project;
             move |cx| Workspace::test_app_state_for_project(&project, cx)
         });
 
         let (_, _) = cx.add_window_view({
-            let project = project.clone();
+            let project = project;
             let app_state = app_state.clone();
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
-                    project.clone(),
+                    project,
                     app_state.clone(),
                     WorkspaceWindowRole::Primary,
                     window,
@@ -9568,11 +9646,11 @@ mod tests {
             }
         });
         let (_, _) = cx.add_window_view({
-            let project = project.clone();
+            let project = project;
             let app_state = app_state.clone();
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
-                    project.clone(),
+                    project,
                     app_state.clone(),
                     WorkspaceWindowRole::SecondaryEditor,
                     window,

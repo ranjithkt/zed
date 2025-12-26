@@ -29,6 +29,7 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 auto_update.workspace = true
+log.workspace = true
 call.workspace = true
 channel.workspace = true
 chrono.workspace = true
