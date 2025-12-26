@@ -51,17 +51,22 @@
 
 - [ ] T011 [P] [US1] Add persistence test: two workspaces with identical roots but different `workspace_id` + `window_role` are persisted and can be queried distinctly for last-session restore in `crates/workspace/src/persistence.rs`
 - [ ] T012 [P] [US1] Add persistence test: last-session listing includes remote-backed workspaces and preserves ordering by window stack in `crates/workspace/src/persistence.rs`
-- [ ] T013 [P] [US1] Add GPUI test: create primary + secondary window, open distinct files in each, persist, simulate restore-by-id flow, and assert no unintended duplicates (same file = canonical absolute path) in `crates/workspace/src/workspace.rs` (or `crates/zed/src/main.rs` test module if more appropriate)
+- [ ] T013 [P] [US1] Add GPUI test: create primary + secondary window, open distinct files in each, persist, simulate restore-by-id flow, and assert no unintended duplicates (same file = (project origin, canonical absolute path)) in `crates/workspace/src/workspace.rs` (or `crates/zed/src/main.rs` test module if more appropriate)
+- [ ] T014 [P] [US1] Add GPUI test: missing files do not prevent restore; missing item is shown unavailable and other tabs restore in `crates/workspace/src/workspace.rs` (or `crates/zed/src/main.rs` test module if more appropriate)
+- [ ] T015 [P] [US1] Add GPUI test: unsaved buffers restore only in their original window (by persisted buffer id) and are not duplicated across windows in `crates/workspace/src/workspace.rs`
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Update session restore to restore by persisted `workspace_id` entries (not by `workspace::open_paths` chooser) in `crates/zed/src/main.rs` (`restore_or_create_workspace`, `restorable_workspace_locations`)
-- [ ] T015 [US1] Ensure restore honors system window tabs setting (when enabled, restore additional windows as tabs) in `crates/zed/src/main.rs` (preserve the “wait for first window” behavior where required)
-- [ ] T016 [US1] Implement “open window from serialized workspace” helper that creates a window with the correct role/id and calls `Workspace::load_workspace(...)` in `crates/workspace/src/workspace.rs` (must support both local and remote-backed workspaces)
-- [ ] T017 [US1] Ensure restore does not merge items across windows; prevent unintended duplicates by de-duplicating within a window by canonical absolute path within the window’s project origin in `crates/workspace/src/workspace.rs`
-- [ ] T018 [US1] Preserve tab order and active tab per window during restore in `crates/workspace/src/workspace.rs` (pane/group deserialization + active pane selection)
-- [ ] T019 [US1] Preserve window ordering when restoring multiple windows based on stored window stack in `crates/zed/src/main.rs` and `crates/workspace/src/persistence.rs`
-- [ ] T020 [US1] Implement remote reconnect failure behavior: if a remote-backed window can’t reconnect, restore it in disconnected state, prompt to reconnect, and restore tabs once connected in `crates/zed/src/main.rs` and `crates/workspace/src/workspace.rs`
+- [ ] T016 [US1] Update session restore to restore by persisted `workspace_id` entries (not by `workspace::open_paths` chooser) in `crates/zed/src/main.rs` (`restore_or_create_workspace`, `restorable_workspace_locations`)
+- [ ] T017 [US1] Ensure restore honors system window tabs setting (when enabled, restore additional windows as tabs) in `crates/zed/src/main.rs` (preserve the “wait for first window” behavior where required)
+- [ ] T018 [US1] Implement “open window from serialized workspace” helper that creates a window with the correct role/id and calls `Workspace::load_workspace(...)` in `crates/workspace/src/workspace.rs` (must support both local and remote-backed workspaces)
+- [ ] T019 [US1] Ensure restore does not merge items across windows; prevent unintended duplicates by de-duplicating within a window by (project origin, canonical absolute path) in `crates/workspace/src/workspace.rs`
+- [ ] T020 [US1] Preserve tab order and active tab per window during restore in `crates/workspace/src/workspace.rs` (pane/group deserialization + active pane selection)
+- [ ] T021 [US1] Preserve window ordering when restoring multiple windows based on stored window stack in `crates/zed/src/main.rs` and `crates/workspace/src/persistence.rs`
+- [ ] T022 [US1] Ensure missing-file restore behavior matches FR-007 (unavailable item UI, other tabs still restore) in `crates/workspace/src/workspace.rs`
+- [ ] T023 [US1] Ensure unsaved buffers restore only in their original window (by persisted buffer id) and are never duplicated across windows in `crates/workspace/src/workspace.rs`
+- [ ] T024 [US1] Implement window-limit handling: partial restore + non-modal toast/notification in the restored primary window summarizing what could not be restored in `crates/zed/src/main.rs` and `crates/workspace/src/toast_layer.rs` (or existing notification mechanism)
+- [ ] T025 [US1] Implement remote reconnect failure behavior: if a remote-backed window can’t reconnect, restore it in disconnected state, prompt to reconnect, and restore tabs once connected in `crates/zed/src/main.rs` and `crates/workspace/src/workspace.rs`
 
 **Checkpoint**: US1 complete; session restore produces the correct set of windows/tabs without unintended duplicates, respects system window tabs, and preserves project-origin separation.
 
@@ -75,12 +80,12 @@
 
 ### Tests for User Story 2 (required) ⚠️
 
-- [ ] T021 [P] [US2] Add GPUI test: close a secondary window, then verify persisted last-session workspaces no longer include the closed window’s `workspace_id` in `crates/workspace/src/workspace.rs`
+- [ ] T026 [P] [US2] Add GPUI test: close a secondary window, then verify persisted last-session workspaces no longer include the closed window’s `workspace_id` in `crates/workspace/src/workspace.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Ensure closing a secondary window properly detaches it from the session (clears `session_id` and/or updates DB) without affecting other windows in `crates/workspace/src/workspace.rs` (`Workspace::close_window`, `remove_from_session`, `serialize_workspace_internal`)
-- [ ] T023 [US2] Ensure window/tab state is serialized for both primary and secondary windows at close-time (not just periodically) in `crates/workspace/src/workspace.rs`
+- [ ] T027 [US2] Ensure closing a secondary window properly detaches it from the session (clears `session_id` and/or updates DB) without affecting other windows in `crates/workspace/src/workspace.rs` (`Workspace::close_window`, `remove_from_session`, `serialize_workspace_internal`)
+- [ ] T028 [US2] Ensure window/tab state is serialized for both primary and secondary windows at close-time (not just periodically) in `crates/workspace/src/workspace.rs`
 
 **Checkpoint**: US2 complete; closed windows do not reappear and their tabs are not merged into primary on next restore.
 
@@ -94,12 +99,12 @@
 
 ### Tests for User Story 3 (required) ⚠️
 
-- [ ] T024 [P] [US3] Add unit test verifying the rust-analyzer initialization parameters include all visible worktree roots (and/or workspace folders) needed to discover `Cargo.toml`-based workspaces in `crates/project/src/lsp_store.rs` (or the module that builds rust-analyzer init options)
+- [ ] T029 [P] [US3] Add unit test verifying the rust-analyzer initialization parameters include all visible worktree roots (and/or workspace folders) needed to discover `Cargo.toml`-based workspaces in `crates/project/src/lsp_store.rs` (or the module that builds rust-analyzer init options)
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] Identify where rust-analyzer init options/workspace folders are constructed and why restored/opened projects might omit necessary roots in `crates/project/src/lsp_store.rs`
-- [ ] T026 [US3] Implement the fix so rust-analyzer receives correct workspace information after open/restore and no longer reports “Failed to discover workspace” for valid Rust projects in `crates/project/src/lsp_store.rs` (and related rust-analyzer configuration plumbing)
+- [ ] T030 [US3] Identify where rust-analyzer init options/workspace folders are constructed and why restored/opened projects might omit necessary roots in `crates/project/src/lsp_store.rs`
+- [ ] T031 [US3] Implement the fix so rust-analyzer receives correct workspace information after open/restore and no longer reports “Failed to discover workspace” for valid Rust projects in `crates/project/src/lsp_store.rs` (and related rust-analyzer configuration plumbing)
 
 **Checkpoint**: US3 complete; rust-analyzer discovers the workspace successfully after restore for valid Rust projects.
 
@@ -109,10 +114,10 @@
 
 **Purpose**: Final verification and cleanup.
 
-- [ ] T027 Run `specs/001-multi-window-session/quickstart.md` Scenarios A–F manually and record outcomes
-- [ ] T028 [P] Run `cargo test -p workspace -p project -p zed` and fix any new failures related to this feature
-- [ ] T029 [P] Run `./script/clippy` (or `./script/clippy.ps1` on Windows) and fix any new warnings in modified files
-- [ ] T030 Ensure no new `unwrap()` / `expect()` in non-test code paths in modified files
+- [ ] T032 Run `specs/001-multi-window-session/quickstart.md` Scenarios A–F manually and record outcomes
+- [ ] T033 [P] Run `cargo test -p workspace -p project -p zed` and fix any new failures related to this feature
+- [ ] T034 [P] Run `./script/clippy` (or `./script/clippy.ps1` on Windows) and fix any new warnings in modified files
+- [ ] T035 Ensure no new `unwrap()` / `expect()` in non-test code paths in modified files
 
 ---
 
@@ -130,8 +135,8 @@
 
 - **Phase 1**: T001–T003 can be done in parallel
 - **Phase 2**: T004/T005 can proceed with T006/T007 once schema is decided; T008–T010 may overlap but must coordinate on shared files
-- **Phase 3**: T011–T013 can be written in parallel (tests), then implementation tasks proceed
-- **Phase 5**: T024 can be written in parallel with other story work (separate crate/file)
+- **Phase 3**: T011–T015 can be written in parallel (tests), then implementation tasks proceed
+- **Phase 5**: T029 can be written in parallel with other story work (separate crate/file)
 
 ---
 

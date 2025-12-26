@@ -1,106 +1,121 @@
 # Implementation Plan: Multi-Window Session Restore
 
-**Branch**: `001-multi-window-session` | **Date**: 2025-12-26 | **Spec**: [spec.md](spec.md)  
-**Goal**: Restore multi-window sessions without duplicating secondary-window tabs into the primary window (including system window tabs when enabled), and fix rust-analyzer workspace discovery failures triggered by open/restore flows.
+**Branch**: `001-multi-window-session` | **Date**: 2025-12-26 | **Spec**: `spec.md`  
+**Input**: Feature specification from `specs/001-multi-window-session/spec.md`
 
 ## Summary
 
-This feature has two coupled problems:
+Restore multi-window sessions by loading and restoring **persisted workspace ids per window** (not by path-based “open” heuristics), ensuring:
 
-1. **Session restore collapses multi-window state**: On startup/reopen, restore currently opens workspaces using `workspace::open_paths(...)` based on root paths. That path-selection logic is designed to choose a “best” existing window, which can cause multiple session workspaces (especially those sharing the same roots) to restore into the same window, leading to duplicated tabs and lost window separation.
-2. **rust-analyzer workspace discovery failures**: rust-analyzer reports “Failed to discover workspace” during open/restore. The desired outcome is to fix the underlying cause so workspace discovery succeeds for valid Rust projects.
-
-The plan is to:
-
-- Restore **by persisted workspace records** (per window, per project origin) rather than “open paths and let the chooser decide”.
-- Ensure **secondary editor windows have their own persistent workspace ids** so their tabs can be saved and restored.
-- Ensure rust-analyzer workspace discovery succeeds for valid Rust projects after open/restore (no message suppression).
+- Each previously-open window’s tabs/panes restore into the same window (including when represented as system window tabs).
+- No unintended duplicates are created within a window (de-dup key: **(project origin, canonical absolute path)**).
+- Remote-backed sessions (WSL/SSH/remote server) restore within their origin; reconnect failures restore disconnected and prompt to reconnect.
+- rust-analyzer workspace discovery succeeds after open/restore by initializing with **workspace folders for all visible worktree roots** in the window.
 
 ## Technical Context
 
-- **Language**: Rust
-- **UI framework**: GPUI
-- **Session restore entrypoint**: `crates/zed/src/main.rs` (`restore_or_create_workspace`)
-- **Persistence**: `crates/workspace/src/persistence.rs` and the `workspaces` table
-- **Rust Analyzer status notifications**: `crates/project/src/lsp_store/rust_analyzer_ext.rs`
+**Language/Version**: Rust 1.92 (`rust-toolchain.toml`)  
+**Primary Dependencies**: GPUI (Zed UI framework), Zed crates (`workspace`, `project`, `session`, `zed`), async tasks/executors used by GPUI  
+**Storage**: Existing workspace persistence (workspace DB / `workspaces` table and serialized workspace blobs)  
+**Testing**: `cargo test` (including GPUI tests where applicable); follow GPUI timer guidance for deterministic tests  
+**Target Platform**: Zed desktop (macOS/Windows/Linux); macOS may use system window tabs  
+**Project Type**: Rust multi-crate workspace (existing Zed repo structure)  
+**Performance Goals**: Keep startup/restore responsive; avoid blocking the UI thread on slow IO/remote reconnection  
+**Constraints**:
+- Avoid panics in non-test code (`unwrap`/`expect` forbidden); propagate errors (`?`) and surface actionable UI errors where appropriate.
+- Preserve entity update safety rules (no re-entrant entity updates; use closure `cx`).
+- Do not suppress rust-analyzer messages; fix the underlying failure condition.
+**Scale/Scope**: Multiple windows per project origin; many tabs per window; “platform window limit” is handled with partial restore and a non-modal notification
 
-## Key Code Facts (current behavior)
+## Constitution Check
 
-- Startup restore calls `workspace::open_paths(&paths.paths(), OpenOptions::default(), ...)` per session entry. This uses the “best match” window chooser and can collapse multiple intended windows into one.
-- Workspace persistence uses a **single `SerializedWorkspace` per `workspace_id`**, which is currently selected by **roots** via `WorkspaceDb::workspace_for_roots(...)`. This API returns only one match for a root set.
-- Secondary editor windows are opened via `Workspace::new_with_role(None, ..., SecondaryEditor, ...)`, which means they have **no `database_id`**, so they cannot serialize state.
-- rust-analyzer status updates are logged unconditionally in `rust_analyzer_ext::register_notifications(...)` for each `experimental/serverStatus` notification.
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-## Proposed Architecture Changes
+- **Narrow scope**: Focused on session restore correctness + rust-analyzer discovery for restored/opened projects.
+- **No panic control flow**: Plan requires error propagation/logging patterns, not `unwrap`/`expect`.
+- **Tests required**: Tests are included for restore and rust-analyzer init parameter construction; manual quickstart scenarios cover platform/system-tab and remote cases.
+- **Prefer existing structure**: No new crates; changes scoped to existing crates and persistence model.
 
-### 1) Persist per-window workspace state
+**Result**: PASS (no constitution violations required).
 
-- Ensure each secondary editor window is created with a fresh `WorkspaceId` (database id), so it can serialize independently.
-- Persist the window role (Primary / SecondaryEditor) alongside the serialized workspace, so “open project” behavior can still prefer the primary layout.
+## Project Structure
 
-### 2) Restore session by workspace ids (not by roots)
+### Documentation (this feature)
 
-- Extend persistence to return the *set of workspaces* that were open in the last session as **workspace ids**, ordered by the stored window stack.
-- Add a new restore path that opens windows from these serialized workspaces directly (bounds, docks, panes, tabs), avoiding the global `open_paths` chooser.
+```text
+specs/001-multi-window-session/
+├── spec.md
+├── plan.md
+├── research.md
+├── data-model.md
+├── quickstart.md
+├── contracts/
+│   └── session-restore.md
+└── tasks.md
+```
 
-### 3) Fix rust-analyzer workspace discovery on open/restore
+### Source Code (repository root)
 
-- Identify why rust-analyzer cannot discover the workspace in restored/opened projects.
-- Ensure Zed provides rust-analyzer with sufficient workspace root information so discovery succeeds without manual configuration.
+```text
+crates/
+├── zed/
+│   └── src/
+│       └── main.rs
+├── workspace/
+│   └── src/
+│       ├── workspace.rs
+│       ├── persistence.rs
+│       └── persistence/
+│           └── model.rs
+└── project/
+    └── src/
+        ├── lsp_store.rs
+        └── lsp_store/
+            └── rust_analyzer_ext.rs
+```
 
-## Files Expected to Change
+**Structure Decision**: Keep implementation within existing Zed crates (`zed`, `workspace`, `project`). Persist additional workspace metadata (role/origin identifiers) and switch restore from path-based open to restore-by-workspace-id.
 
-- `crates/zed/src/main.rs` (startup restore flow)
-- `crates/workspace/src/workspace.rs` (secondary window creation, restore helpers)
-- `crates/workspace/src/persistence.rs` (queries for session restore; workspace role persistence)
-- `crates/workspace/src/persistence/model.rs` (serialized model updates)
-- `crates/session/src/session.rs` (ordering/stack is already persisted; likely no change)
-- `crates/project/src/lsp_store/rust_analyzer_ext.rs` (diagnostics/telemetry around discovery failures; verify fix)
+## Implementation Phases (high level)
 
-## Implementation Phases
+### Phase 0: Confirm current behavior (read-only)
 
-### Phase 0: Research & Confirmation
+- Verify restore entrypoint uses path-based `open_paths` behavior and collapses multiple windows.
+- Verify secondary editor windows lack a persisted `WorkspaceId` and therefore can’t serialize.
+- Capture rust-analyzer “Failed to discover workspace” reproduction conditions.
 
-- Confirm how secondary windows should be identified/created on restore (window count, ordering).
-- Confirm current persistence schema and whether it can store per-window role safely.
+### Phase 1: Persistence + restore primitives
 
-Artifacts: [research.md](research.md)
+- Persist enough metadata to uniquely restore windows:
+  - `workspace_id`, `session_id`, `window_id` (ordering only), `window_role`, `location/origin`, `paths`.
+- Add APIs to enumerate last-session workspaces in session window stack order and load by `workspace_id`.
+- Ensure secondary windows are created with persisted ids and serialize independently.
 
-### Phase 1: Data model + Contract
+### Phase 2: Restore-by-id + correctness
 
-- Define the persisted “session window state” model and how it maps to runtime windows.
-- Define restore contract: ordering, duplication rules, missing file behavior, and error handling.
+- Restore session by enumerated workspace ids:
+  - Create windows (or system tabs) per session entry.
+  - Load serialized workspaces into the created windows without cross-window merging.
+  - De-duplicate within a window by **(project origin, canonical absolute path)** only.
+- Remote restore:
+  - Reconnect per origin; on failure restore disconnected and prompt; restore tabs once connected.
+- Platform window limits:
+  - Partial restore + non-modal notification/toast in the primary window.
 
-Artifacts:
-- [data-model.md](data-model.md)
-- [contracts/session-restore.md](contracts/session-restore.md)
+### Phase 3: rust-analyzer workspace discovery fix
 
-### Phase 2: Session restore plumbing
+- Ensure rust-analyzer initialization includes workspace folders for **all visible worktree roots** in the window, so Cargo workspace discovery succeeds after restore/open.
 
-- Add persistence API to list last-session workspaces as workspace ids ordered by session window stack.
-- Implement restore code path to open windows from serialized workspaces and restore items per window.
+### Phase 4: Tests + validation
 
-### Phase 3: Persist secondary windows
+- Add/adjust tests to cover:
+  - Persistence and last-session enumeration.
+  - Restore-by-id preventing unintended duplicates.
+  - rust-analyzer init parameter construction (workspace folders).
+- Run `quickstart.md` scenarios A–F across local + remote + system-tab setting.
 
-- Ensure secondary windows get a database id and serialize state.
-- Ensure “open project normally” still selects the appropriate primary workspace state.
+## Complexity Tracking
 
-### Phase 4: Rust Analyzer workspace discovery fix
-
-- Fix the underlying cause of rust-analyzer “failed to discover workspace” during open/restore.
-- Validate with manual scenario and (where feasible) tests.
-
-### Phase 5: Tests + Manual Verification
-
-- Add GPUI tests for:
-  - Multi-window persistence: primary+secondary both persist and restore without duplication.
-  - Session restore ordering: window stack ordering respected (where possible).
-  - rust-analyzer workspace discovery: valid Rust workspaces are discoverable after open/restore (no “Failed to discover workspace”).
-
-Manual verification steps: [quickstart.md](quickstart.md)
-
-## Next Step
-
-Run `/speckit.tasks` to break this plan into concrete, ordered implementation tasks.
-
-
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| N/A | N/A | N/A |

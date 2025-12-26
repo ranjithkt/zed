@@ -23,7 +23,7 @@
 
 **Expected**:
 - The app restores using system window tabs (as supported by the platform/setting).
-- No unintended duplicate tabs are created for the same file (same file = canonical absolute path within the window’s project origin).
+- No unintended duplicate tabs are created for the same file (same file = (project origin, canonical absolute path)).
 
 ## Scenario B: Intentional duplicates across windows
 

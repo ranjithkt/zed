@@ -10,10 +10,14 @@
 ### Session 2025-12-26
 
 - Q: Restore as system window tabs vs separate OS windows? → A: Use the platform/user setting (system window tabs when enabled, otherwise separate windows), and do not create unintended duplicate tabs for the same file.
-- Q: What counts as “the same file” for de-duplication? → A: Canonical absolute path.
+- Q: What counts as “the same file” for de-duplication? → A: (Project origin, canonical absolute path).
 - Q: What qualifies as a “valid Rust workspace” for the rust-analyzer fix? → A: Any restored/opened project with a `Cargo.toml` in any visible worktree root or descendant.
 - Q: Which project types are in-scope for restore (local vs WSL/SSH/remote)? → A: Local + WSL/SSH/remote-server projects (no mixing origins within a single window).
 - Q: If a remote project can’t reconnect during restore, what should Zed do? → A: Restore the window in a disconnected state and prompt to reconnect; tabs restore once connected.
+- Q: After restore, what workspace-folders scope should rust-analyzer be initialized with? → A: All visible worktree roots for the window.
+- Q: When system window tabs are enabled, what does “window count” mean for restore success? → A: Count restored session window entries/workspaces (even if represented as tabs within one OS window).
+- Q: How should unsaved buffers be restored across multiple windows? → A: Restore unsaved buffers only in their original window (keyed by a persisted buffer id); never duplicate across windows.
+- Q: If a platform window limit prevents restoring all windows, how should Zed report it? → A: Show a non-modal notification/toast in the restored primary window summarizing what could not be restored.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -66,8 +70,8 @@ A user opens or restores a window in a Rust project and expects Rust language in
 ### Edge Cases
 
 - **Missing files**: If a previously-open file no longer exists, the window still restores and the missing file is shown as unavailable without preventing other tabs from restoring.
-- **Unsaved buffers**: If a previous session included unsaved buffers, the system restores them in their original window when safe to do so; otherwise it restores the window without duplicating buffers into other windows.
-- **Many windows**: If a session contains many secondary windows, the system restores them without duplicating tabs into the primary window. If a platform-imposed window limit is hit, restore proceeds with as many windows as allowed and reports what could not be restored.
+- **Unsaved buffers**: If a previous session included unsaved buffers, the system restores them only in their original window (keyed by a persisted buffer id) when safe to do so; otherwise it restores the window without them. Unsaved buffers MUST NOT be duplicated into other windows.
+- **Many windows**: If a session contains many secondary windows, the system restores them without duplicating tabs into the primary window. If a platform-imposed window limit is hit, restore proceeds with as many windows as allowed and shows a non-modal notification/toast in the restored primary window summarizing what could not be restored.
 - **Corrupt session state**: If session/window state is unreadable, the system opens a single primary window and does not create duplicate tabs.
 - **Remote reconnect failure**: If a remote-backed window cannot reconnect during restore, the window still restores in a disconnected state, prompts the user to reconnect, and restores tabs once connected.
 
@@ -88,11 +92,11 @@ A user opens or restores a window in a Rust project and expects Rust language in
 - **FR-001**: System MUST restore the previous session’s set of windows (primary plus any secondary editor windows) for a project when the user restarts the app
 - **FR-002**: System MUST restore each window’s open editor tabs into the same window they were previously associated with
 - **FR-003**: System MUST preserve tab order within each restored window
-- **FR-004**: System MUST NOT create unintended duplicate tabs for the same file during restore (including when restoring into system window tabs), except when the file was previously open in multiple windows intentionally (per FR-005). “Same file” is determined by canonical absolute path within a single project origin (local filesystem vs a specific remote environment).
+- **FR-004**: System MUST NOT create unintended duplicate tabs for the same file during restore (including when restoring into system window tabs), except when the file was previously open in multiple windows intentionally (per FR-005). “Same file” is determined by (project origin, canonical absolute path).
 - **FR-005**: System MUST only restore a file in multiple windows if that file was open in multiple windows in the previous session
 - **FR-006**: System MUST persist window and tab state such that a restart restores the most recent state at close time
 - **FR-007**: System MUST restore windows and tabs even if some previously-open files are missing or unavailable
-- **FR-008**: System MUST ensure Rust workspace discovery succeeds for valid Rust projects opened or restored by Zed (no “Failed to discover workspace” for projects where a Rust workspace exists). A “valid Rust workspace” is any restored/opened project with a `Cargo.toml` in any visible worktree root or descendant.
+- **FR-008**: System MUST ensure Rust workspace discovery succeeds for valid Rust projects opened or restored by Zed (no “Failed to discover workspace” for projects where a Rust workspace exists). A “valid Rust workspace” is any restored/opened project with a `Cargo.toml` in any visible worktree root or descendant. rust-analyzer MUST be initialized with workspace folders that include all visible worktree roots for the window.
 - **FR-009**: System MUST NOT suppress rust-analyzer status messages; the intended fix is to prevent the underlying workspace-discovery failure from occurring
 - **FR-010**: System MUST honor the platform/user setting for system window tabs during restore: when enabled, restore additional windows as system tabs; otherwise restore as separate OS windows
 - **FR-011**: System MUST restore windows and tabs for remote-backed projects (WSL/SSH/remote server) after reconnecting to the corresponding remote environment, preserving per-window separation by project origin
@@ -109,7 +113,7 @@ A user opens or restores a window in a Rust project and expects Rust language in
 
 ### Measurable Outcomes
 
-- **SC-001**: After restart, the number of restored windows matches the previous session’s window count in 100% of manual test scenarios (unless constrained by platform limits)
+- **SC-001**: After restart, the number of restored session window entries/workspaces matches the previous session’s window count in 100% of manual test scenarios (unless constrained by platform limits). When system window tabs are enabled, multiple restored entries may be represented as tabs within a single OS window.
 - **SC-002**: After restart, tabs are restored into their original windows with **0 unintended duplicates** in the primary window across the test matrix
 - **SC-003**: In restored Rust projects that contain a valid Rust workspace, rust-analyzer workspace discovery succeeds (no “Failed to discover workspace”) in 100% of test runs
 - **SC-004**: Users can complete a restart-and-continue workflow (restart → confirm windows/tabs restored → resume editing) without manual cleanup in 95%+ of test runs

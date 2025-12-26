@@ -45,7 +45,7 @@ Restore multi-window sessions such that each window’s tabs/panes are restored 
 - A file/tab MUST be restored into a window **only** if it was present in that window’s serialized workspace.
 - If a file existed in multiple windows intentionally, it MUST be restored in each of those windows.
 - The system MUST NOT create additional duplicates of a file/tab within the primary window unless that duplication existed previously.
-- “Same file” is determined by canonical absolute path within a single project origin (local filesystem vs a specific remote environment).
+- “Same file” is determined by (project origin, canonical absolute path).
 
 ## Error Handling
 
