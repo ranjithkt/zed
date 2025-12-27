@@ -2718,13 +2718,22 @@ impl Workspace {
     pub fn open_in_new_editor_window(
         &mut self,
         project_path: ProjectPath,
-        _entry_id: ProjectEntryId,
+        entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
-        if self.role != WorkspaceWindowRole::Primary {
-            return;
+        if self.role == WorkspaceWindowRole::Primary {
+            self.open_in_new_editor_window_impl(project_path, cx);
+        } else {
+            // Secondary windows route to the primary window
+            self.open_in_new_editor_window_via_primary(project_path, entry_id, cx);
         }
+    }
 
+    fn open_in_new_editor_window_impl(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) {
         let project = self.project.clone();
         let app_state = self.app_state.clone();
 
@@ -2772,6 +2781,41 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn open_in_new_editor_window_via_primary(
+        &self,
+        project_path: ProjectPath,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        let project_key = ProjectKey::for_project(&self.project);
+        let workspace_store = self.app_state.workspace_store.clone();
+
+        let primary_window_id = workspace_store
+            .read(cx)
+            .primary_window_for_project(project_key);
+
+        let primary_workspace: Option<WindowHandle<Workspace>> = primary_window_id
+            .and_then(|window_id| workspace_store.read(cx).workspace_window_for_id(window_id));
+
+        if let Some(primary_workspace) = primary_workspace {
+            cx.spawn(async move |_, cx| {
+                cx.update(|cx| {
+                    primary_workspace
+                        .update(cx, |workspace, _, cx| {
+                            workspace.open_in_new_editor_window(project_path, entry_id, cx);
+                        })
+                        .ok();
+                })
+                .ok();
+            })
+            .detach();
+        } else {
+            log::warn!(
+                "Cannot open in new editor window: no primary window found for secondary editor window"
+            );
+        }
     }
 
     pub fn move_focused_panel_to_next_position(
