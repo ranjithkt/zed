@@ -2566,18 +2566,42 @@ impl Workspace {
             WorkspaceWindowRole::Primary => {
                 let workspace_store = self.app_state.workspace_store.clone();
                 let project_key = ProjectKey::for_project(&self.project);
+                let my_paths = self.root_paths(cx);
+
+                // Find secondary windows - first try by Project entity (normal case),
+                // then fall back to finding by paths (restored windows have separate Projects)
                 let secondary_windows = workspace_store.read_with(cx, |store, _| {
                     let secondary_ids = store
                         .secondary_windows_for_project(project_key)
                         .into_iter()
                         .collect::<HashSet<_>>();
 
-                    store
+                    let mut windows: Vec<_> = store
                         .workspaces
                         .iter()
                         .filter(|workspace| secondary_ids.contains(&workspace.window_id()))
                         .cloned()
-                        .collect::<Vec<_>>()
+                        .collect();
+
+                    // If no secondary windows found by Project, try finding by paths
+                    // This handles restored windows which have separate Project entities
+                    if windows.is_empty() && !my_paths.is_empty() {
+                        windows = store
+                            .workspaces
+                            .iter()
+                            .filter(|workspace| {
+                                workspace
+                                    .read_with(cx, |ws, cx| {
+                                        ws.role == WorkspaceWindowRole::SecondaryEditor
+                                            && ws.root_paths(cx) == my_paths
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .cloned()
+                            .collect();
+                    }
+
+                    windows
                 });
 
                 cx.spawn_in(window, async move |this_window, cx| {
@@ -8159,6 +8183,14 @@ pub fn workspace_location_for_id(
     persistence::DB.workspace_location_for_id(workspace_id)
 }
 
+/// Returns workspace info including location, paths, and window role.
+pub fn workspace_info_for_id(
+    workspace_id: WorkspaceId,
+) -> Option<(SerializedWorkspaceLocation, PathList, WorkspaceWindowRole)> {
+    let ws = persistence::DB.workspace_by_id(workspace_id)?;
+    Some((ws.location, ws.paths, ws.window_role))
+}
+
 actions!(
     collab,
     [
@@ -8663,7 +8695,41 @@ pub fn open_workspace_by_id(
 
         match serialized_workspace.location.clone() {
             persistence::model::SerializedWorkspaceLocation::Local => {
-                open_local_serialized_workspace(serialized_workspace, app_state, cx).await
+                open_local_serialized_workspace(serialized_workspace, app_state, None, cx).await
+            }
+            persistence::model::SerializedWorkspaceLocation::Remote(_) => {
+                anyhow::bail!(
+                    "restore-by-id for remote workspaces is not implemented yet (workspace id {:?})",
+                    workspace_id
+                )
+            }
+        }
+    })
+}
+
+/// Opens a workspace by its ID, optionally using an existing Project.
+/// When `existing_project` is provided, the workspace will share that Project
+/// (useful for restoring secondary windows that should share state with a primary).
+pub fn open_workspace_by_id_with_project(
+    workspace_id: WorkspaceId,
+    app_state: Arc<AppState>,
+    existing_project: Option<Entity<Project>>,
+    cx: &mut App,
+) -> Task<
+    anyhow::Result<(
+        WindowHandle<Workspace>,
+        Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
+    )>,
+> {
+    cx.spawn(async move |cx| {
+        let Some(serialized_workspace) = persistence::DB.workspace_by_id(workspace_id) else {
+            anyhow::bail!("No workspace found for id {:?}", workspace_id);
+        };
+
+        match serialized_workspace.location.clone() {
+            persistence::model::SerializedWorkspaceLocation::Local => {
+                open_local_serialized_workspace(serialized_workspace, app_state, existing_project, cx)
+                    .await
             }
             persistence::model::SerializedWorkspaceLocation::Remote(_) => {
                 anyhow::bail!(
@@ -8678,23 +8744,28 @@ pub fn open_workspace_by_id(
 async fn open_local_serialized_workspace(
     serialized_workspace: SerializedWorkspace,
     app_state: Arc<AppState>,
+    existing_project: Option<Entity<Project>>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<(
     WindowHandle<Workspace>,
     Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
 )> {
-    let project_handle = cx.update(|cx| {
-        Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            true,
-            cx,
-        )
-    })?;
+    let project_handle = if let Some(project) = existing_project {
+        project
+    } else {
+        cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                true,
+                cx,
+            )
+        })?
+    };
 
     let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
         Vec::with_capacity(serialized_workspace.paths.ordered_paths().count());

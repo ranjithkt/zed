@@ -19,7 +19,7 @@ use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
-use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, Focusable as _, QuitMode, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -32,7 +32,8 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::{project_settings::ProjectSettings, trusted_worktrees};
+use project::{Project, project_settings::ProjectSettings, trusted_worktrees};
+use workspace::WorkspaceId;
 use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
@@ -1146,57 +1147,91 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             workspace_ids.len(),
             workspace_ids
         );
-        let use_system_window_tabs = cx
-            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
-            .unwrap_or(false);
-        let mut results: Vec<Result<(), Error>> = Vec::new();
-        let mut tasks = Vec::new();
 
-        for (index, workspace_id) in workspace_ids.into_iter().enumerate() {
-            let app_state = app_state.clone();
-            let task = cx.spawn(async move |cx| {
-                let Some((location, paths)) = workspace::workspace_location_for_id(workspace_id)
-                else {
-                    return Err(anyhow::anyhow!("No workspace found for id {:?}", workspace_id));
-                };
+        // Group workspaces by paths so we can share Projects between windows for the same project
+        let mut workspace_groups: HashMap<String, Vec<(WorkspaceId, workspace::WorkspaceWindowRole)>> =
+            HashMap::default();
 
-                match location {
-                    workspace::SerializedWorkspaceLocation::Local => {
-                        let open_task =
-                            cx.update(|cx| workspace::open_workspace_by_id(workspace_id, app_state, cx))?;
-                        open_task.await.map(|_| ())
-                    }
-                    workspace::SerializedWorkspaceLocation::Remote(mut connection_options) => {
-                        if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
-                            cx.update(|cx| {
-                                SshSettings::get_global(cx)
-                                    .fill_connection_options_from_settings(options)
-                            })?;
-                        }
-
-                        recent_projects::open_remote_project(
-                            connection_options,
-                            paths.paths().into_iter().cloned().collect(),
-                            app_state,
-                            workspace::OpenOptions::default(),
-                            cx,
-                        )
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))
-                    }
-                }
-            });
-
-            // If we're using system window tabs and this is the first workspace,
-            // wait for it to finish so that the other windows can be added as tabs.
-            if use_system_window_tabs && index == 0 {
-                results.push(task.await);
-            } else {
-                tasks.push(task);
+        for workspace_id in workspace_ids {
+            if let Some((location, paths, role)) = workspace::workspace_info_for_id(workspace_id) {
+                // Use paths as the grouping key (serialized for comparison)
+                let paths_key = format!("{:?}:{:?}", location, paths.paths());
+                workspace_groups
+                    .entry(paths_key)
+                    .or_default()
+                    .push((workspace_id, role));
             }
         }
 
-        results.extend(future::join_all(tasks).await);
+        // Sort each group so Primary windows come first
+        for group in workspace_groups.values_mut() {
+            group.sort_by_key(|(_, role)| match role {
+                workspace::WorkspaceWindowRole::Primary => 0,
+                workspace::WorkspaceWindowRole::SecondaryEditor => 1,
+            });
+        }
+
+        let mut results: Vec<Result<(), Error>> = Vec::new();
+
+        // Restore each group, sharing Project between windows with the same paths
+        for (_paths_key, group) in workspace_groups {
+            let mut project_handle: Option<Entity<Project>> = None;
+
+            for (workspace_id, _role) in group {
+                let app_state = app_state.clone();
+                let existing_project = project_handle.clone();
+
+                let result: Result<(), Error> = async {
+                    let Some((location, paths, _)) = workspace::workspace_info_for_id(workspace_id)
+                    else {
+                        return Err(anyhow::anyhow!("No workspace found for id {:?}", workspace_id));
+                    };
+
+                    match location {
+                        workspace::SerializedWorkspaceLocation::Local => {
+                            let open_task = cx.update(|cx| {
+                                workspace::open_workspace_by_id_with_project(
+                                    workspace_id,
+                                    app_state,
+                                    existing_project,
+                                    cx,
+                                )
+                            })?;
+                            let (window, _) = open_task.await?;
+
+                            // Capture the Project from the first window (primary) to share with secondaries
+                            if project_handle.is_none() {
+                                project_handle = window
+                                    .read_with(cx, |workspace, _| workspace.project().clone())
+                                    .ok();
+                            }
+                            Ok(())
+                        }
+                        workspace::SerializedWorkspaceLocation::Remote(mut connection_options) => {
+                            if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                                cx.update(|cx| {
+                                    SshSettings::get_global(cx)
+                                        .fill_connection_options_from_settings(options)
+                                })?;
+                            }
+
+                            recent_projects::open_remote_project(
+                                connection_options,
+                                paths.paths().into_iter().cloned().collect(),
+                                app_state,
+                                workspace::OpenOptions::default(),
+                                cx,
+                            )
+                            .await
+                            .map_err(|e| anyhow::anyhow!(e))
+                        }
+                    }
+                }
+                .await;
+
+                results.push(result);
+            }
+        }
 
         let mut error_count = 0;
         for result in results {

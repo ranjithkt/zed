@@ -848,13 +848,13 @@ impl ProjectPanel {
 
                             let app_state = workspace.app_state().clone();
                             let project_key = workspace::ProjectKey::for_project(workspace.project());
+                            let current_window_id = window.window_handle().window_id();
+
                             let target_workspace = app_state.workspace_store.read_with(cx, |store, _| {
                                 store
                                     .active_editor_window_for_project(project_key)
                                     .and_then(|window_id| store.workspace_window_for_id(window_id))
                             });
-
-                            let current_window_id = window.window_handle().window_id();
                             let open_task = match target_workspace {
                                 Some(target_workspace) if target_workspace.window_id() != current_window_id => {
                                     target_workspace.update(cx, |workspace, target_window, cx| {
