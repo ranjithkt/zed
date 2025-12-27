@@ -71,6 +71,11 @@ impl Workspace {
             });
         }
 
+        log::info!(
+            "schedule_resolved_task: terminal_provider={}, role={:?}",
+            self.terminal_provider.is_some(),
+            self.role
+        );
         if let Some(terminal_provider) = self.terminal_provider.as_ref() {
             let task_status = terminal_provider.spawn(spawn_in_terminal, window, cx);
 
@@ -79,9 +84,9 @@ impl Workspace {
                 match res {
                     Some(Ok(status)) => {
                         if status.success() {
-                            log::debug!("Task spawn succeeded");
+                            log::info!("Task spawn succeeded");
                         } else {
-                            log::debug!("Task spawn failed, code: {:?}", status.code());
+                            log::info!("Task spawn failed, code: {:?}", status.code());
                         }
                     }
                     Some(Err(e)) => {
@@ -91,14 +96,20 @@ impl Workspace {
                             w.show_toast(Toast::new(id, format!("Task spawn failed: {e}")), cx);
                         })
                     }
-                    None => log::debug!("Task spawn got cancelled"),
+                    None => log::info!("Task spawn got cancelled"),
                 };
             });
             self.scheduled_tasks.push(task);
         } else if self.role == WorkspaceWindowRole::SecondaryEditor {
             // Secondary windows without a terminal provider should route task
             // spawning to the primary window.
+            log::info!("schedule_resolved_task: routing to primary window");
             self.spawn_task_via_primary_window(spawn_in_terminal, cx);
+        } else {
+            log::warn!(
+                "schedule_resolved_task: no terminal provider and not a secondary window (role={:?})",
+                self.role
+            );
         }
     }
 
@@ -152,6 +163,11 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        log::info!(
+            "start_debug_session: debugger_provider={}, role={:?}",
+            self.debugger_provider.is_some(),
+            self.role
+        );
         if let Some(provider) = self.debugger_provider.as_mut() {
             provider.start_session(
                 scenario,
@@ -164,6 +180,7 @@ impl Workspace {
         } else if self.role == WorkspaceWindowRole::SecondaryEditor {
             // Secondary windows without a debugger provider should route debug
             // sessions to the primary window.
+            log::info!("start_debug_session: routing to primary window");
             self.start_debug_via_primary_window(
                 scenario,
                 task_context,

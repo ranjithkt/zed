@@ -13,7 +13,7 @@ use stack_trace_view::StackTraceView;
 use tasks_ui::{Spawn, TaskOverrides};
 use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
-use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
+use workspace::{ItemHandle, ProjectKey, ShutdownDebugAdapters, Workspace, WorkspaceWindowRole};
 use zed_actions::ToggleFocus;
 use zed_actions::debugger::OpenOnboardingModal;
 
@@ -146,6 +146,11 @@ pub fn init(cx: &mut App) {
                 DebuggerOnboardingModal::toggle(workspace, window, cx)
             })
             .register_action_renderer(|div, workspace, _, cx| {
+                // For secondary windows, route debug actions to the primary window
+                if workspace.role() == WorkspaceWindowRole::SecondaryEditor {
+                    return register_secondary_window_debug_actions(div, workspace, cx);
+                }
+
                 let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
                     return div;
                 };
@@ -435,6 +440,123 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// Registers debug action handlers for secondary windows that route to the primary window's debug panel.
+fn register_secondary_window_debug_actions(
+    div: gpui::Div,
+    workspace: &Workspace,
+    _cx: &ui::Context<Workspace>,
+) -> gpui::Div {
+    let project = workspace.project().clone();
+    let workspace_store = workspace.app_state().workspace_store.clone();
+
+    let get_active_running_state = {
+        let project = project.clone();
+        let workspace_store = workspace_store.clone();
+        move |cx: &mut ui::App| -> Option<gpui::Entity<session::running::RunningState>> {
+            let project_key = ProjectKey::for_project(&project);
+            let primary_window_id = workspace_store
+                .read(cx)
+                .primary_window_for_project(project_key)?;
+            let primary_workspace = workspace_store
+                .read(cx)
+                .workspace_window_for_id(primary_window_id)?;
+
+            primary_workspace
+                .read_with(cx, |workspace, cx| {
+                    let debug_panel = workspace.panel::<DebugPanel>(cx)?;
+                    let active_session = debug_panel.read(cx).active_session()?;
+                    let running_state = active_session.read(cx).running_state().clone();
+                    if running_state.read(cx).session().read(cx).is_terminated() {
+                        return None;
+                    }
+                    Some(running_state)
+                })
+                .ok()
+                .flatten()
+        }
+    };
+
+    div.on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &StepOver, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.step_over(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &StepInto, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.step_in(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &StepOut, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.step_out(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &StepBack, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.step_back(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &Continue, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.continue_thread(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &Pause, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.pause_thread(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &Stop, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.stop_thread(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &Restart, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.restart_session(cx));
+            }
+        }
+    })
+    .on_action({
+        let get_active_running_state = get_active_running_state.clone();
+        move |_: &ToggleIgnoreBreakpoints, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.toggle_ignore_breakpoints(cx));
+            }
+        }
+    })
+    .on_action({
+        move |_: &Detach, _, cx| {
+            if let Some(running_state) = get_active_running_state(cx) {
+                running_state.update(cx, |state, cx| state.detach_client(cx));
+            }
+        }
+    })
 }
 
 fn spawn_task_or_modal(

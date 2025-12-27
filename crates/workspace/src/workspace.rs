@@ -7352,11 +7352,43 @@ impl Render for Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
-        if let Some(status) = self
+
+        // Get debugger thread state from either local provider (primary) or primary window (secondary)
+        let debugger_thread_state = if let Some(status) = self
             .debugger_provider
             .as_ref()
             .and_then(|provider| provider.active_thread_state(cx))
         {
+            Some(status)
+        } else if self.role == WorkspaceWindowRole::SecondaryEditor {
+            // Secondary windows check the primary window's debugger provider
+            let project_key = ProjectKey::for_project(&self.project);
+            self.app_state
+                .workspace_store
+                .read(cx)
+                .primary_window_for_project(project_key)
+                .and_then(|primary_window_id| {
+                    self.app_state
+                        .workspace_store
+                        .read(cx)
+                        .workspace_window_for_id(primary_window_id)
+                })
+                .and_then(|primary_workspace| {
+                    primary_workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace
+                                .debugger_provider
+                                .as_ref()
+                                .and_then(|provider| provider.active_thread_state(cx))
+                        })
+                        .ok()
+                        .flatten()
+                })
+        } else {
+            None
+        };
+
+        if let Some(status) = debugger_thread_state {
             match status {
                 ThreadStatus::Running | ThreadStatus::Stepping => {
                     context.add("debugger_running");
