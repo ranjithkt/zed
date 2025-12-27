@@ -981,6 +981,20 @@ impl Pane {
                     break;
                 }
             }
+
+            // If the existing tab's project entry id has changed (or the item doesn't have one),
+            // fall back to matching by project path so project-tree opens dedupe correctly.
+            if existing_item.is_none() {
+                for (index, item) in self.items.iter().enumerate() {
+                    if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                        && item.project_path(cx).as_ref() == Some(&project_path)
+                    {
+                        let item = item.boxed_clone();
+                        existing_item = Some((index, item));
+                        break;
+                    }
+                }
+            }
         } else {
             for (index, item) in self.items.iter().enumerate() {
                 if item.buffer_kind(cx) == ItemBufferKind::Singleton

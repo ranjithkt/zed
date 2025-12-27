@@ -888,6 +888,13 @@ impl Domain for WorkspaceDb {
             DROP INDEX IF EXISTS ix_workspaces_location;
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths, window_role);
         ),
+        // Allow multiple workspaces for the same roots (multi-window session restore).
+        // `workspace_id` is the true identity; `paths`+`remote_connection_id` are only a lookup key
+        // for "open project normally" heuristics.
+        sql!(
+            DROP INDEX IF EXISTS ix_workspaces_location;
+            CREATE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths);
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -977,8 +984,11 @@ impl WorkspaceDb {
                 FROM workspaces
                 WHERE
                     paths IS ? AND
-                    remote_connection_id IS ? AND
-                    (window_role IS NULL OR window_role = "Primary")
+                    remote_connection_id IS ?
+                ORDER BY
+                    CASE WHEN window_role IS NULL OR window_role = "Primary" THEN (0) ELSE (1) END,
+                    timestamp DESC,
+                    workspace_id DESC
                 LIMIT 1
             })
             .and_then(|mut prepared_statement| {
@@ -1234,22 +1244,6 @@ impl WorkspaceDb {
                     WorkspaceWindowRole::SecondaryEditor => "SecondaryEditor",
                 };
 
-                conn.exec_bound(sql!(
-                    DELETE
-                    FROM workspaces
-                    WHERE
-                        workspace_id != ?1 AND
-                        paths IS ?2 AND
-                        remote_connection_id IS ?3 AND
-                        window_role IS ?4
-                ))?((
-                    workspace.id,
-                    paths.paths.clone(),
-                    remote_connection_id,
-                    window_role_str,
-                ))
-                .context("clearing out old locations")?;
-
                 // Upsert
                 let query = sql!(
                     INSERT INTO workspaces(
@@ -1292,6 +1286,17 @@ impl WorkspaceDb {
                         timestamp = CURRENT_TIMESTAMP
                 );
                 let mut prepared_query = conn.exec_bound(query)?;
+
+                // Log before moving values
+                log::debug!(
+                    "save_workspace: saving workspace_id={:?}, session_id={:?}, window_id={:?}, window_role={}, paths={:?}",
+                    workspace.id,
+                    &workspace.session_id,
+                    &workspace.window_id,
+                    window_role_str,
+                    &paths.paths
+                );
+
                 let args = (
                     workspace.id,
                     paths.paths.clone(),
@@ -1686,12 +1691,23 @@ impl WorkspaceDb {
         last_session_id: &str,
         last_session_window_stack: Option<Vec<WindowId>>,
     ) -> Result<Vec<WorkspaceId>> {
+        log::debug!(
+            "last_session_workspace_ids: querying for session_id={}",
+            last_session_id
+        );
+
         let workspaces: Vec<(WorkspaceId, Option<u64>)> = self
             .select_bound(sql! {
                 SELECT workspace_id, window_id
                 FROM workspaces
                 WHERE session_id = ?
             })?(last_session_id.to_owned())?;
+
+        log::debug!(
+            "last_session_workspace_ids: found {} workspaces: {:?}",
+            workspaces.len(),
+            workspaces
+        );
 
         let mut result: Vec<(WorkspaceId, Option<WindowId>)> = workspaces
             .into_iter()
@@ -2235,6 +2251,36 @@ VALUES {placeholders};"#
     query! {
         pub async fn clear_trusted_worktrees() -> Result<()> {
             DELETE FROM trusted_worktrees
+        }
+    }
+
+    pub(crate) fn workspace_location_for_id(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Option<(SerializedWorkspaceLocation, PathList)> {
+        let (paths, paths_order, remote_connection_id): (String, String, Option<u64>) = self
+            .select_row_bound(sql! {
+                SELECT paths, paths_order, remote_connection_id
+                FROM workspaces
+                WHERE workspace_id = ?
+                LIMIT 1
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id))
+            .warn_on_err()
+            .flatten()?;
+
+        let paths = PathList::deserialize(&SerializedPathList {
+            paths,
+            order: paths_order,
+        });
+
+        if let Some(remote_connection_id) = remote_connection_id {
+            let options = self
+                .remote_connection(RemoteConnectionId(remote_connection_id))
+                .log_err()?;
+            Some((SerializedWorkspaceLocation::Remote(options), paths))
+        } else {
+            Some((SerializedWorkspaceLocation::Local, paths))
         }
     }
 }
@@ -3029,6 +3075,91 @@ mod tests {
             PathList::new(&["/tmp6c", "/tmp6b", "/tmp6a"]),
         );
         assert_eq!(locations[0].1, Some(60));
+    }
+
+    #[gpui::test]
+    async fn test_multiple_workspaces_for_same_roots_are_distinct_and_enumerable() {
+        zlog::init_test();
+
+        let db =
+            WorkspaceDb::open_test_db("test_multiple_workspaces_for_same_roots_are_distinct").await;
+
+        let session_id = "session-id-multi".to_owned();
+        let paths = PathList::new(&["/tmp-same-root"]);
+
+        let workspace_primary = SerializedWorkspace {
+            id: WorkspaceId(100),
+            paths: paths.clone(),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: Default::default(),
+            session_id: Some(session_id.clone()),
+            window_id: Some(10),
+            user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::Primary,
+        };
+
+        let workspace_secondary_1 = SerializedWorkspace {
+            id: WorkspaceId(101),
+            paths: paths.clone(),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: Default::default(),
+            session_id: Some(session_id.clone()),
+            window_id: Some(20),
+            user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::SecondaryEditor,
+        };
+
+        let workspace_secondary_2 = SerializedWorkspace {
+            id: WorkspaceId(102),
+            paths: paths.clone(),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: Default::default(),
+            session_id: Some(session_id.clone()),
+            window_id: Some(30),
+            user_toolchains: Default::default(),
+            window_role: WorkspaceWindowRole::SecondaryEditor,
+        };
+
+        // Save multiple windows for the same roots.
+        db.save_workspace(workspace_primary.clone()).await;
+        db.save_workspace(workspace_secondary_1.clone()).await;
+        db.save_workspace(workspace_secondary_2.clone()).await;
+
+        // "Open project normally" should prefer the Primary snapshot.
+        let mut expected_primary = workspace_primary.clone();
+        // `workspace_for_roots` is used for normal open flows and intentionally does not carry
+        // session membership.
+        expected_primary.session_id = None;
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp-same-root"]).unwrap(),
+            expected_primary
+        );
+
+        // Restore enumeration should include all snapshots, ordered by window stack.
+        let window_stack = Some(vec![
+            WindowId::from(20),
+            WindowId::from(10),
+            WindowId::from(30),
+        ]);
+        let ids = db
+            .last_session_workspace_ids(&session_id, window_stack)
+            .unwrap();
+        assert_eq!(ids, vec![WorkspaceId(101), WorkspaceId(100), WorkspaceId(102)]);
     }
 
     fn default_workspace<P: AsRef<Path>>(

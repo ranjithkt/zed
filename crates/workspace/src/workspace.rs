@@ -1726,7 +1726,7 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace =
+            let mut serialized_workspace =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
@@ -1739,6 +1739,38 @@ impl Workspace {
                         .log_err();
                 }
             }
+
+            // If we're opening a new window for roots that are already open in another local
+            // workspace window, ensure this new window gets its own `workspace_id` so it can
+            // persist independently (multi-window sessions).
+            //
+            // This avoids multiple primary windows accidentally sharing a single `workspace_id`
+            // and overwriting each other in the DB (which would collapse restore into one window).
+            let serialized_paths = serialized_workspace
+                .as_ref()
+                .map(|ws| ws.paths.serialize().paths);
+            let fork_workspace_id = if requesting_window.is_none()
+                && serialized_paths.is_some()
+                && cx
+                    .update(|cx| {
+                        let serialized_paths = serialized_paths.as_ref()?;
+                        for window in local_workspace_windows(cx) {
+                            if let Ok(workspace) = window.read(cx) {
+                                let roots = workspace.root_paths(cx);
+                                let window_paths = PathList::new(&roots).serialize().paths;
+                                if &window_paths == serialized_paths {
+                                    return Some(());
+                                }
+                            }
+                        }
+                        None
+                    })?
+                    .is_some()
+            {
+                Some(DB.next_id().await.unwrap_or_else(|_| Default::default()))
+            } else {
+                None
+            };
 
             // Get project paths for all of the abs_paths
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
@@ -1758,7 +1790,14 @@ impl Workspace {
                 }
             }
 
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
+            let workspace_id = if let Some(fork_workspace_id) = fork_workspace_id {
+                // Keep using the loaded snapshot contents, but assign the new identity.
+                // This ensures subsequent serialization writes to the new workspace id.
+                if let Some(serialized_workspace) = serialized_workspace.as_mut() {
+                    serialized_workspace.id = fork_workspace_id;
+                }
+                fork_workspace_id
+            } else if let Some(serialized_workspace) = serialized_workspace.as_ref() {
                 serialized_workspace.id
             } else {
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
@@ -2543,9 +2582,12 @@ impl Workspace {
 
                 cx.spawn_in(window, async move |this_window, cx| {
                     for secondary_window in &secondary_windows {
+                        // Use CloseIntent::Quit so secondary windows preserve their session_id
+                        // for multi-window session restore. They're closing as part of the
+                        // primary window group, not being individually dismissed.
                         let prepare_secondary =
                             secondary_window.update(cx, |workspace, window, cx| {
-                                workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                                workspace.prepare_to_close(CloseIntent::Quit, window, cx)
                             })?;
 
                         if !prepare_secondary.await? {
@@ -2560,8 +2602,11 @@ impl Workspace {
                         }
                     }
 
+                    // Use CloseIntent::Quit so the primary window also preserves its session_id
+                    // for multi-window session restore. Closing the primary window closes the
+                    // entire project window group.
                     let prepare_primary = this_window.update_in(cx, |workspace, window, cx| {
-                        workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                        workspace.prepare_to_close(CloseIntent::Quit, window, cx)
                     })?;
 
                     if !prepare_primary.await? {
@@ -8108,10 +8153,10 @@ pub fn last_session_workspace_ids(
         .log_err()
 }
 
-/// Loads a SerializedWorkspace by its workspace_id.
-/// Returns None if no workspace found for the given id.
-pub(crate) fn serialized_workspace_by_id(workspace_id: WorkspaceId) -> Option<SerializedWorkspace> {
-    DB.workspace_by_id(workspace_id)
+pub fn workspace_location_for_id(
+    workspace_id: WorkspaceId,
+) -> Option<(SerializedWorkspaceLocation, PathList)> {
+    persistence::DB.workspace_location_for_id(workspace_id)
 }
 
 actions!(
@@ -8598,6 +8643,168 @@ pub fn open_paths(
         };
         result
     })
+}
+
+#[allow(clippy::type_complexity)]
+pub fn open_workspace_by_id(
+    workspace_id: WorkspaceId,
+    app_state: Arc<AppState>,
+    cx: &mut App,
+) -> Task<
+    anyhow::Result<(
+        WindowHandle<Workspace>,
+        Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
+    )>,
+> {
+    cx.spawn(async move |cx| {
+        let Some(serialized_workspace) = persistence::DB.workspace_by_id(workspace_id) else {
+            anyhow::bail!("No workspace found for id {:?}", workspace_id);
+        };
+
+        match serialized_workspace.location.clone() {
+            persistence::model::SerializedWorkspaceLocation::Local => {
+                open_local_serialized_workspace(serialized_workspace, app_state, cx).await
+            }
+            persistence::model::SerializedWorkspaceLocation::Remote(_) => {
+                anyhow::bail!(
+                    "restore-by-id for remote workspaces is not implemented yet (workspace id {:?})",
+                    workspace_id
+                )
+            }
+        }
+    })
+}
+
+async fn open_local_serialized_workspace(
+    serialized_workspace: SerializedWorkspace,
+    app_state: Arc<AppState>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<(
+    WindowHandle<Workspace>,
+    Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
+)> {
+    let project_handle = cx.update(|cx| {
+        Project::local(
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            None,
+            true,
+            cx,
+        )
+    })?;
+
+    let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
+        Vec::with_capacity(serialized_workspace.paths.ordered_paths().count());
+
+    for path in serialized_workspace.paths.ordered_paths() {
+        let path = path.clone();
+        let project_path_task = cx.update(|cx| {
+            Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+        })?;
+
+        match project_path_task.await.log_err() {
+            Some((_, project_path)) => project_paths.push((path, Some(project_path))),
+            None => project_paths.push((path, None)),
+        }
+    }
+
+    let toolchains = persistence::DB.toolchains(serialized_workspace.id).await?;
+    for (toolchain, worktree_path, path) in toolchains {
+        let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
+            this.find_worktree(&worktree_path, cx)
+                .and_then(|(worktree, rel_path)| {
+                    if rel_path.is_empty() {
+                        Some(worktree.read(cx).id())
+                    } else {
+                        None
+                    }
+                })
+        })?
+        else {
+            continue;
+        };
+
+        let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+        if !app_state.fs.is_file(toolchain_path.as_path()).await {
+            continue;
+        }
+
+        project_handle
+            .update(cx, |this, cx| {
+                this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
+            })?
+            .await;
+    }
+
+    project_handle.update(cx, |this, cx| {
+        for (scope, toolchains) in &serialized_workspace.user_toolchains {
+            for toolchain in toolchains {
+                this.add_toolchain(toolchain.clone(), scope.clone(), cx);
+            }
+        }
+    })?;
+
+    let window_bounds_override = window_bounds_env_override();
+    let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
+        (Some(WindowBounds::Windowed(bounds)), None)
+    } else if let Some(display) = serialized_workspace.display
+        && let Some(bounds) = serialized_workspace.window_bounds.as_ref()
+    {
+        (Some(bounds.0), Some(display))
+    } else if let Some((display, bounds)) = persistence::read_default_window_bounds() {
+        (Some(bounds), Some(display))
+    } else {
+        (None, None)
+    };
+
+    let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
+    options.window_bounds = window_bounds;
+
+    let centered_layout = serialized_workspace.centered_layout;
+    let role = serialized_workspace.window_role;
+    let workspace_id = serialized_workspace.id;
+
+    let window = cx.update(|cx| {
+        cx.open_window(options, {
+            let app_state = app_state.clone();
+            let project_handle = project_handle.clone();
+            move |window, cx| {
+                cx.new(|cx| {
+                    let mut workspace = Workspace::new_with_role(
+                        Some(workspace_id),
+                        project_handle,
+                        app_state,
+                        role,
+                        window,
+                        cx,
+                    );
+                    workspace.centered_layout = centered_layout;
+                    workspace
+                })
+            }
+        })
+    })??;
+
+    notify_if_database_failed(window, cx);
+
+    let opened_items = window
+        .update(cx, |_, window, cx| {
+            open_items(Some(serialized_workspace), project_paths, window, cx)
+        })?
+        .await
+        .unwrap_or_default();
+
+    window
+        .update(cx, |workspace, window, cx| {
+            window.activate_window();
+            workspace.update_history(cx);
+        })
+        .log_err();
+
+    Ok((window, opened_items))
 }
 
 pub fn open_new(
@@ -9576,8 +9783,10 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (workspace, cx) = cx.add_window_view({
+            let project = project.clone();
+            move |window, cx| Workspace::test_new(project, window, cx)
+        });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
@@ -9656,18 +9865,15 @@ mod tests {
         fs.insert_tree("/root", json!({ "one.txt": "hello" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let app_state = cx.update({
-            let project = project;
-            move |cx| Workspace::test_app_state_for_project(&project, cx)
-        });
+        let app_state = cx.update(|cx| Workspace::test_app_state_for_project(&project, cx));
 
         let (_, _) = cx.add_window_view({
-            let project = project;
+            let project = project.clone();
             let app_state = app_state.clone();
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
                     project,
-                    app_state.clone(),
+                    app_state,
                     WorkspaceWindowRole::Primary,
                     window,
                     cx,
@@ -9675,12 +9881,12 @@ mod tests {
             }
         });
         let (_, _) = cx.add_window_view({
-            let project = project;
+            let project = project.clone();
             let app_state = app_state.clone();
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
                     project,
-                    app_state.clone(),
+                    app_state,
                     WorkspaceWindowRole::SecondaryEditor,
                     window,
                     cx,
@@ -9740,18 +9946,15 @@ mod tests {
         fs.insert_tree("/root", json!({ "one": "" })).await;
 
         let project = Project::test(fs, ["root".as_ref()], cx).await;
-        let app_state = cx.update({
-            let project = project.clone();
-            move |cx| Workspace::test_app_state_for_project(&project, cx)
-        });
+        let app_state = cx.update(|cx| Workspace::test_app_state_for_project(&project, cx));
 
         let (_, _) = cx.add_window_view({
             let project = project.clone();
             let app_state = app_state.clone();
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
-                    project.clone(),
-                    app_state.clone(),
+                    project,
+                    app_state,
                     WorkspaceWindowRole::Primary,
                     window,
                     cx,
@@ -9763,8 +9966,8 @@ mod tests {
             let app_state = app_state.clone();
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
-                    project.clone(),
-                    app_state.clone(),
+                    project,
+                    app_state,
                     WorkspaceWindowRole::SecondaryEditor,
                     window,
                     cx,
@@ -9785,12 +9988,12 @@ mod tests {
         assert_eq!(window_count, 1);
 
         let (_, _) = cx.add_window_view({
-            let project = project.clone();
-            let app_state = app_state.clone();
+            let project = project;
+            let app_state = app_state;
             move |window, cx| {
                 Workspace::test_new_with_shared_app_state(
-                    project.clone(),
-                    app_state.clone(),
+                    project,
+                    app_state,
                     WorkspaceWindowRole::SecondaryEditor,
                     window,
                     cx,

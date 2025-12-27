@@ -1140,7 +1140,108 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+    if let Some(workspace_ids) = restorable_workspace_ids(cx, &app_state).await {
+        log::info!(
+            "Multi-window restore: received {} workspace IDs: {:?}",
+            workspace_ids.len(),
+            workspace_ids
+        );
+        let use_system_window_tabs = cx
+            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
+            .unwrap_or(false);
+        let mut results: Vec<Result<(), Error>> = Vec::new();
+        let mut tasks = Vec::new();
+
+        for (index, workspace_id) in workspace_ids.into_iter().enumerate() {
+            let app_state = app_state.clone();
+            let task = cx.spawn(async move |cx| {
+                let Some((location, paths)) = workspace::workspace_location_for_id(workspace_id)
+                else {
+                    return Err(anyhow::anyhow!("No workspace found for id {:?}", workspace_id));
+                };
+
+                match location {
+                    workspace::SerializedWorkspaceLocation::Local => {
+                        let open_task =
+                            cx.update(|cx| workspace::open_workspace_by_id(workspace_id, app_state, cx))?;
+                        open_task.await.map(|_| ())
+                    }
+                    workspace::SerializedWorkspaceLocation::Remote(mut connection_options) => {
+                        if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                            cx.update(|cx| {
+                                SshSettings::get_global(cx)
+                                    .fill_connection_options_from_settings(options)
+                            })?;
+                        }
+
+                        recent_projects::open_remote_project(
+                            connection_options,
+                            paths.paths().into_iter().cloned().collect(),
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))
+                    }
+                }
+            });
+
+            // If we're using system window tabs and this is the first workspace,
+            // wait for it to finish so that the other windows can be added as tabs.
+            if use_system_window_tabs && index == 0 {
+                results.push(task.await);
+            } else {
+                tasks.push(task);
+            }
+        }
+
+        results.extend(future::join_all(tasks).await);
+
+        let mut error_count = 0;
+        for result in results {
+            if let Err(e) = result {
+                log::error!("Failed to restore workspace: {}", e);
+                error_count += 1;
+            }
+        }
+
+        if error_count > 0 {
+            let message = if error_count == 1 {
+                "Failed to restore 1 workspace. Check logs for details.".to_string()
+            } else {
+                format!(
+                    "Failed to restore {} workspaces. Check logs for details.",
+                    error_count
+                )
+            };
+
+            let toast_shown = cx
+                .update(|cx| {
+                    if let Some(window) = cx.active_window()
+                        && let Some(workspace) = window.downcast::<Workspace>()
+                    {
+                        workspace
+                            .update(cx, |workspace, _, cx| {
+                                workspace.show_toast(
+                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    cx,
+                                )
+                            })
+                            .ok();
+                        return true;
+                    }
+                    false
+                })
+                .unwrap_or(false);
+
+            if !toast_shown {
+                log::error!(
+                    "Failed to show notification for window restoration errors, because no workspace windows were available."
+                );
+            }
+        }
+    } else if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         let use_system_window_tabs = cx
             .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
             .unwrap_or(false);
@@ -1268,6 +1369,70 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
     }
 
     Ok(())
+}
+
+pub(crate) async fn restorable_workspace_ids(
+    cx: &mut AsyncApp,
+    app_state: &Arc<AppState>,
+) -> Option<Vec<workspace::WorkspaceId>> {
+    let mut restore_behavior = cx
+        .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
+        .ok()?;
+
+    let session_handle = app_state.session.clone();
+    let (last_session_id, last_session_window_stack) = cx
+        .update(|cx| {
+            let session = session_handle.read(cx);
+
+            (
+                session.last_session_id().map(|id| id.to_string()),
+                session.last_session_window_stack(),
+            )
+        })
+        .ok()?;
+
+    if last_session_id.is_none()
+        && matches!(
+            restore_behavior,
+            workspace::RestoreOnStartupBehavior::LastSession
+        )
+    {
+        restore_behavior = workspace::RestoreOnStartupBehavior::LastWorkspace;
+    }
+
+    match restore_behavior {
+        workspace::RestoreOnStartupBehavior::LastSession => {
+            let Some(last_session_id) = last_session_id else {
+                log::info!("Multi-window restore: last_session_id is None, falling back to location-based restore");
+                return None;
+            };
+            let ordered = last_session_window_stack.is_some();
+
+            let ids = workspace::last_session_workspace_ids(&last_session_id, last_session_window_stack.clone());
+            log::info!(
+                "Multi-window restore: last_session_id={}, window_stack={:?}, query returned {:?}",
+                last_session_id,
+                last_session_window_stack,
+                ids
+            );
+
+            let Some(mut ids) = ids.filter(|ids| !ids.is_empty()) else {
+                log::info!("Multi-window restore: no workspace IDs found for session, falling back to location-based restore");
+                return None;
+            };
+
+            // Since last_session_window_order returns the windows ordered front-to-back
+            // we need to open the window that was frontmost last.
+            if ordered {
+                ids.reverse();
+            }
+            Some(ids)
+        }
+        _ => {
+            log::info!("Multi-window restore: restore_behavior is {:?}, not LastSession, returning None", restore_behavior);
+            None
+        }
+    }
 }
 
 pub(crate) async fn restorable_workspace_locations(
