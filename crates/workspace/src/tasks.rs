@@ -125,28 +125,35 @@ impl Workspace {
             .read(cx)
             .primary_window_for_project(project_key);
 
-        let primary_workspace: Option<WindowHandle<Workspace>> =
-            primary_window_id.and_then(|window_id| {
-                workspace_store
-                    .read(cx)
-                    .workspaces
-                    .iter()
-                    .find(|handle| handle.window_id() == window_id)
-                    .cloned()
-            });
+        log::info!(
+            "spawn_task_via_primary_window: project_key={:?}, primary_window_id={:?}",
+            project_key,
+            primary_window_id
+        );
+
+        let primary_workspace: Option<WindowHandle<Workspace>> = primary_window_id
+            .and_then(|window_id| workspace_store.read(cx).workspace_window_for_id(window_id));
+
+        log::info!(
+            "spawn_task_via_primary_window: primary_workspace={}",
+            primary_workspace.is_some()
+        );
 
         if let Some(primary_workspace) = primary_workspace {
             cx.spawn(async move |_, cx| {
-                cx.update(|cx| {
+                log::info!("spawn_task_via_primary_window: inside spawn, updating primary workspace");
+                let result = cx.update(|cx| {
                     primary_workspace
                         .update(cx, |workspace, window, cx| {
-                            // The returned Task tracks task execution status, but we
-                            // don't need to await it from the secondary window.
-                            let _ = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
+                            log::info!("spawn_task_via_primary_window: inside update, calling spawn_in_terminal");
+                            // Detach the returned Task so the terminal spawn isn't cancelled.
+                            // We don't need to await the result from the secondary window.
+                            workspace.spawn_in_terminal(spawn_in_terminal, window, cx).detach();
                         })
-                        .ok();
-                })
-                .ok();
+                });
+                if let Err(e) = result {
+                    log::error!("spawn_task_via_primary_window: update failed: {:?}", e);
+                }
             })
             .detach();
         } else {
@@ -248,7 +255,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Option<Result<ExitStatus>>> {
+        log::info!(
+            "spawn_in_terminal: terminal_provider={}, role={:?}",
+            self.terminal_provider.is_some(),
+            self.role
+        );
         if let Some(terminal_provider) = self.terminal_provider.as_ref() {
+            log::info!("spawn_in_terminal: calling terminal_provider.spawn");
             terminal_provider.spawn(spawn_in_terminal, window, cx)
         } else {
             Task::ready(None)
