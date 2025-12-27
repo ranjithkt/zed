@@ -5,7 +5,7 @@ use gpui::SharedString;
 use serde_json::{Value, json};
 use smol::{Timer, io::AsyncReadExt, process::Stdio};
 use std::time::Duration;
-use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
+use task::{BuildTaskDefinition, DebugScenario, SpawnInTerminal, TaskTemplate};
 use util::command::new_smol_command;
 
 pub(crate) struct CargoLocator;
@@ -114,30 +114,39 @@ impl DapLocator for CargoLocator {
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
-        let builder = ShellBuilder::new(&build_config.shell, cfg!(windows)).non_interactive();
-        let mut child = builder
-            .build_command(
-                Some("cargo".into()),
-                &build_config
-                    .args
-                    .iter()
-                    .cloned()
-                    .take_while(|arg| arg != "--")
-                    .chain(Some("--message-format=json".to_owned()))
-                    .collect::<Vec<_>>(),
-            )
+        let args: Vec<_> = build_config
+            .args
+            .iter()
+            .cloned()
+            .take_while(|arg| arg != "--")
+            .filter(|arg| !arg.is_empty())
+            .chain(Some("--message-format=json".to_owned()))
+            .collect();
+        let mut child = new_smol_command("cargo")
+            .args(&args)
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
-            .current_dir(cwd)
+            .current_dir(&cwd)
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         let mut output = String::new();
+        let mut stderr_output = String::new();
         if let Some(mut stdout) = child.stdout.take() {
             stdout.read_to_string(&mut output).await?;
         }
+        if let Some(mut stderr) = child.stderr.take() {
+            stderr.read_to_string(&mut stderr_output).await?;
+        }
 
         let status = child.status().await?;
-        anyhow::ensure!(status.success(), "Cargo command failed");
+        anyhow::ensure!(
+            status.success(),
+            "Cargo command failed (cwd: {}, args: {:?}): {}",
+            cwd.display(),
+            args,
+            stderr_output
+        );
 
         let is_test = build_config
             .args
