@@ -1,6 +1,6 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, NewEditorWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal,
+    OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder, ZoomIn, ZoomOut,
     invalid_item_view::InvalidItemView,
     item::{
@@ -3031,6 +3031,7 @@ impl Pane {
                             let parent_abs_path = entry_abs_path
                                 .as_deref()
                                 .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                            let project_path_for_new_window = project_path.clone();
                             let relative_path = project_path
                                 .map(|project_path| project_path.path)
                                 .filter(|_| has_relative_path);
@@ -3097,6 +3098,23 @@ impl Pane {
                                                 .boxed_clone(),
                                                 cx,
                                             );
+                                        }),
+                                    )
+                                })
+                                .when_some(project_path_for_new_window, |menu, project_path| {
+                                    menu.entry(
+                                        "Open in New Editor Window",
+                                        Some(Box::new(NewEditorWindow)),
+                                        window.handler_for(&pane, move |pane, _, cx| {
+                                            if let Some(workspace) = pane.workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    workspace.open_in_new_editor_window(
+                                                        project_path.clone(),
+                                                        entry,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
                                         }),
                                     )
                                 });
