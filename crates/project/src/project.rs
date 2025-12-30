@@ -48,11 +48,13 @@ pub use git_store::{
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
 pub use manifest_tree::ManifestTree;
-pub use project_search::Search;
+pub use project_search::{Search, SearchResults};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
-use client::{Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore, proto};
+use client::{
+    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
+};
 use clock::ReplicaId;
 
 use dap::client::DebugAdapterClient;
@@ -108,7 +110,6 @@ use rpc::{
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
-use smol::channel::Receiver;
 use snippet::Snippet;
 pub use snippet_provider;
 use snippet_provider::SnippetProvider;
@@ -1297,7 +1298,7 @@ impl Project {
                     worktree_store.clone(),
                     Some(RemoteHostLocation::from(connection_options)),
                     None,
-                    Some((remote_proto.clone(), REMOTE_SERVER_PROJECT_ID)),
+                    Some((remote_proto.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID))),
                     cx,
                 );
             }
@@ -4141,7 +4142,11 @@ impl Project {
         searcher.into_handle(query, cx)
     }
 
-    pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    pub fn search(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> SearchResults<SearchResult> {
         self.search_impl(query, cx).results(cx)
     }
 
@@ -4830,7 +4835,7 @@ impl Project {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                 trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust(worktree_id, cx)
+                    trusted_worktrees.can_trust(&project.worktree_store, worktree_id, cx)
                 });
             }
             if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
@@ -4869,18 +4874,14 @@ impl Project {
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let remote_host = this
-                .read(cx)
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
             trusted_worktrees.trust(
+                &this.read(cx).worktree_store(),
                 envelope
                     .payload
                     .trusted_paths
                     .into_iter()
                     .filter_map(|proto_path| PathTrust::from_proto(proto_path))
                     .collect(),
-                remote_host,
                 cx,
             );
         })?;
@@ -4896,6 +4897,7 @@ impl Project {
             .update(|cx| TrustedWorktrees::try_get_global(cx))?
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
+            let worktree_store = this.read(cx).worktree_store().downgrade();
             let restricted_paths = envelope
                 .payload
                 .worktree_ids
@@ -4903,11 +4905,7 @@ impl Project {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            let remote_host = this
-                .read(cx)
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
-            trusted_worktrees.restrict(restricted_paths, remote_host, cx);
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         })?;
         Ok(proto::Ack {})
     }
@@ -5033,7 +5031,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Ok(buffer) = results.recv().await {
+        while let Ok(buffer) = results.rx.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());
